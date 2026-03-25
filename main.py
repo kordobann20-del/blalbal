@@ -315,7 +315,7 @@ def edit_card_fin(m, name):
 def profile(m):
     uid = str(m.from_user.id)
     d = users_data.get(uid, {"nick": "Player", "score": 0})
-    bot.send_message(m.chat.id, f"👤 **Профиль:**\n\nНик: **{d['nick']}**\n💰 Очки: `{d['score']:,}`\n🆔 `{uid}`", parse_mode="Markdown")
+    bot.send_message(m.chat.id, f"👤 *Профиль:*\n\n🪪 Ник: **{d['nick']}**\n💰 *Очки:* `{d['score']:,}`\n🆔 `{uid}`", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🚫 Забанить")
 def ban_start(m):

@@ -5,160 +5,209 @@ import time
 import json
 import os
 
-# Твои данные
 TOKEN = "8771453170:AAFJXQ7jBhwRQleTKZRnCFhEW0wmRQLxr3c"
 ADMINS = ["verybigsun", "Nazikrrk"]
 
 bot = telebot.TeleBot(TOKEN)
 
-# Файлы для хранения данных
-CARDS_FILE = 'cards.json'
-COLLECTIONS_FILE = 'collections.json'
+# Файлы базы данных
+FILES = {
+    'cards': 'cards.json',
+    'colls': 'collections.json',
+    'squads': 'squads.json'
+}
 
-# Функции для работы с данными
-def load_json(filename):
-    if os.path.exists(filename):
-        try:
-            with open(filename, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {} if 'collections' in filename else []
-    return {} if 'collections' in filename else []
+def load_db(key):
+    if os.path.exists(FILES[key]):
+        with open(FILES[key], 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {} if key != 'cards' else []
 
-def save_json(data, filename):
-    with open(filename, 'w', encoding='utf-8') as f:
+def save_db(data, key):
+    with open(FILES[key], 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Загружаем данные при старте
-cards = load_json(CARDS_FILE)
-user_collections = load_json(COLLECTIONS_FILE) # {user_id: [cards]}
-user_cooldowns = {}
-states = {}
+# Инициализация
+cards = load_db('cards')
+user_colls = load_db('colls')
+user_squads = load_db('squads')
+cooldowns = {}
+arena_requests = {} # {target_id: requester_id}
 
-# Главное меню
+# Характеристики по звездам
+STATS = {
+    1: {"hp": 1500, "atk": 800, "chance": 50},
+    2: {"hp": 3500, "atk": 1400, "chance": 30},
+    3: {"hp": 6000, "atk": 2500, "chance": 12},
+    4: {"hp": 10000, "atk": 4000, "chance": 6},
+    5: {"hp": 14000, "atk": 6000, "chance": 2}
+}
+
+# --- КЛАВИАТУРЫ ---
 def main_menu(username):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("Крутить карту", "Коллекция")
-    markup.add("Премиум")
+    markup.add("Состав", "Арена", "Премиум")
     if username and username.lower() in [a.lower() for a in ADMINS]:
         markup.add("🛠 Админ-панель")
     return markup
 
-def admin_menu():
+def coll_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("Добавить карту", "Удалить карту")
-    markup.add("Изменить карту", "Список команд")
+    markup.add("⭐", "⭐⭐", "⭐⭐⭐")
+    markup.add("⭐⭐⭐⭐", "⭐⭐⭐⭐⭐")
     markup.add("Назад в меню")
     return markup
 
-# --- ОБРАБОТКА ---
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.send_message(message.chat.id, "Привет! Игра готова.", 
-                     reply_markup=main_menu(message.from_user.username))
-
-@bot.message_handler(func=lambda m: m.text == "Премиум")
-def premium_info(message):
-    bot.send_message(message.chat.id, "Чтобы купить премиум, пиши к @verybigsun")
-
-@bot.message_handler(func=lambda m: m.text in ["Назад в меню", "Отмена"])
-def back(message):
-    states.pop(message.from_user.id, None)
-    bot.send_message(message.chat.id, "Главное меню:", reply_markup=main_menu(message.from_user.username))
-
+# --- ЛОГИКА ВЫПАДЕНИЯ ---
 @bot.message_handler(func=lambda m: m.text == "Крутить карту")
-def roll_card(message):
-    global cards, user_collections
-    u_id = str(message.from_user.id) # JSON ключи всегда строки
-    username = message.from_user.username
+def roll(message):
+    uid = str(message.from_user.id)
+    uname = message.from_user.username
     now = time.time()
 
-    if not cards:
-        return bot.send_message(message.chat.id, "⚠️ Карт пока нет.")
-
-    # Проверка КД: если не админ, проверяем 5 минут (300 сек)
-    is_admin = username and username.lower() in [a.lower() for a in ADMINS]
-    if not is_admin:
-        if u_id in user_cooldowns and now - user_cooldowns[u_id] < 300:
-            left = int((300 - (now - user_cooldowns[u_id])) / 60)
-            return bot.send_message(message.chat.id, f"⏳ КД! Жди {left} мин.")
-
-    card = random.choice(cards)
+    if not cards: return bot.send_message(message.chat.id, "Карт нет.")
     
-    # Сохраняем в коллекцию
-    if u_id not in user_collections:
-        user_collections[u_id] = []
-    user_collections[u_id].append(card)
+    is_adm = uname and uname.lower() in [a.lower() for a in ADMINS]
+    if not is_adm:
+        if uid in cooldowns and now - cooldowns[uid] < 300:
+            return bot.reply_to(message, f"⏳ Жди {int((300-(now-cooldowns[uid]))/60)} мин.")
+
+    # Рандом по шансам
+    rand_val = random.randint(1, 100)
+    target_stars = 1
+    accum = 0
+    for s, info in sorted(STATS.items(), key=lambda x: x[1]['chance']):
+        accum += info['chance']
+        if rand_val <= accum:
+            target_stars = s
+            break
     
-    # Сохраняем КД и БД
-    user_cooldowns[u_id] = now
-    save_json(user_collections, COLLECTIONS_FILE)
+    possible = [c for c in cards if c.get('stars', 1) == target_stars]
+    if not possible: possible = cards # Фолбек если нет карт такой редкости
+    
+    card = random.choice(possible)
+    stars_str = "⭐" * card.get('stars', 1)
+    
+    if uid not in user_colls: user_colls[uid] = []
+    
+    # Проверка на повторку
+    if any(c['name'] == card['name'] for c in user_colls[uid]):
+        bot.send_message(message.chat.id, f"🃏 Выпала повторка: {card['name']}. В коллекцию не добавлена.")
+    else:
+        user_colls[uid].append(card)
+        save_db(user_colls, 'colls')
+        bot.send_photo(message.chat.id, card['photo'], caption=f"✨ НОВАЯ КАРТА!\n{card['name']} {stars_str}\n\n{card['desc']}")
+    
+    cooldowns[uid] = now
 
-    bot.send_photo(message.chat.id, card['photo'], 
-                   caption=f"🎁 Карта: *{card['name']}*\n\n{card['desc']}", 
-                   parse_mode="Markdown")
-
+# --- КОЛЛЕКЦИЯ И ФИЛЬТРЫ ---
 @bot.message_handler(func=lambda m: m.text == "Коллекция")
 def show_coll(message):
-    u_id = str(message.from_user.id)
-    my = user_collections.get(u_id, [])
-    if not my: return bot.send_message(message.chat.id, "Пусто.")
+    bot.send_message(message.chat.id, "Выбери редкость:", reply_markup=coll_menu())
+
+@bot.message_handler(func=lambda m: m.text in ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"])
+def filter_coll(message):
+    uid = str(message.from_user.id)
+    stars_count = len(message.text)
+    my = [c for c in user_colls.get(uid, []) if c.get('stars', 1) == stars_count]
     
-    res = "🗂 Твои карты:\n" + "\n".join([f"- {c['name']}" for c in my])
+    if not my: return bot.send_message(message.chat.id, f"У тебя нет карт на {message.text}")
+    
+    res = f"🗂 Карты {message.text}:\n" + "\n".join([f"- {c['name']}" for c in my])
     bot.send_message(message.chat.id, res)
 
-# Админ-панель и шаги (Добавление/Удаление/Изменение)
-@bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
-def open_adm(message):
-    if message.from_user.username and message.from_user.username.lower() in [a.lower() for a in ADMINS]:
-        bot.send_message(message.chat.id, "Админ-меню:", reply_markup=admin_menu())
-
-@bot.message_handler(func=lambda m: True)
-def handle_text(message):
-    global cards
-    u_id = message.from_user.id
-    username = message.from_user.username
+# --- АРЕНА (РЕПЛАЙ И ВЫЗОВ) ---
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith("арена"))
+def arena_call(message):
+    uid = str(message.from_user.id)
+    target_id = None
     
-    if username and username.lower() in [a.lower() for a in ADMINS]:
-        if message.text == "Добавить карту":
-            states[u_id] = {'action': 'add', 'step': 1}
-            bot.send_message(message.chat.id, "Название:")
-        elif message.text == "Удалить карту":
-            states[u_id] = {'action': 'delete'}
-            bot.send_message(message.chat.id, "Название для удаления:")
-        
-        elif u_id in states:
-            state = states[u_id]
-            if state['action'] == 'delete':
-                cards = [c for c in cards if c['name'].lower() != message.text.lower()]
-                save_json(cards, CARDS_FILE)
-                bot.send_message(message.chat.id, "✅ Удалено.", reply_markup=admin_menu())
-                del states[u_id]
-            elif state['action'] == 'add' and state['step'] == 1:
-                state['name'] = message.text
-                state['step'] = 2
-                bot.send_message(message.chat.id, "Шли фото:")
-            elif state['action'] == 'add' and state['step'] == 3:
-                cards.append({'name': state['name'], 'photo': state['photo'], 'desc': message.text})
-                save_json(cards, CARDS_FILE)
-                bot.send_message(message.chat.id, "✅ Добавлена!", reply_markup=admin_menu())
-                del states[u_id]
+    if message.reply_to_message:
+        target_id = str(message.reply_to_message.from_user.id)
+    else:
+        # Логика поиска по юзернейму (упрощенно)
+        bot.send_message(message.chat.id, "Чтобы вызвать, ответь на сообщение игрока словом 'Арена'")
+        return
 
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
-    u_id = message.from_user.id
-    if u_id in states and states[u_id]['action'] == 'add' and states[u_id]['step'] == 2:
-        states[u_id]['photo'] = message.photo[-1].file_id
-        states[u_id]['step'] = 3
-        bot.send_message(message.chat.id, "Введи описание:")
+    if uid == target_id: return bot.reply_to(message, "Нельзя биться с собой!")
+    
+    arena_requests[target_id] = uid
+    bot.send_message(message.chat.id, f"⚔️ Игрок @{message.from_user.username} вызвал тебя на дуэль! Напиши 'Принять', чтобы начать.")
 
-def run_bot():
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=0, timeout=20)
-        except Exception:
-            time.sleep(5)
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == "принять")
+def arena_accept(message):
+    uid = str(message.from_user.id)
+    if uid not in arena_requests: return
+    
+    enemy_id = arena_requests[uid]
+    del arena_requests[uid]
+    
+    # Логика боя
+    p1_squad = user_squads.get(uid, [])
+    p2_squad = user_squads.get(enemy_id, [])
+    
+    if len(p1_squad) < 1 or len(p2_squad) < 1:
+        return bot.send_message(message.chat.id, "У одного из игроков пустой состав!")
 
-if __name__ == "__main__":
-    run_bot()
+    # Суммируем статы состава
+    def get_power(squad):
+        hp = sum(STATS[c.get('stars', 1)]['hp'] for c in squad)
+        atk = sum(STATS[c.get('stars', 1)]['atk'] for c in squad)
+        return hp, atk
+
+    hp1, atk1 = get_power(p1_squad)
+    hp2, atk2 = get_power(p2_squad)
+    
+    log = "🏁 БИТВА НАЧАЛАСЬ!\n\n"
+    for r in range(1, 6):
+        dmg1 = atk1 + random.randint(-200, 500)
+        dmg2 = atk2 + random.randint(-200, 500)
+        hp2 -= dmg1
+        hp1 -= dmg2
+        log += f"Раунд {r}: Удар {dmg1} | Соперник удар {dmg2}\n"
+        if hp1 <= 0 or hp2 <= 0: break
+    
+    winner = "Ничья"
+    if hp1 > hp2: winner = f"@{message.from_user.username}"
+    elif hp2 > hp1: winner = "Вызыватель"
+    
+    log += f"\n🏆 Победитель: {winner}!"
+    bot.send_message(message.chat.id, log)
+
+# --- АДМИНКА (Добавление со звездами) ---
+@bot.message_handler(commands=['add_card'])
+def adm_add(message):
+    if message.from_user.username in ADMINS:
+        bot.send_message(message.chat.id, "Назови карту:")
+        bot.register_next_step_handler(message, add_step_1)
+
+def add_step_1(message):
+    name = message.text
+    bot.send_message(message.chat.id, "Сколько звезд (1-5):")
+    bot.register_next_step_handler(message, add_step_2, name)
+
+def add_step_2(message, name):
+    try:
+        stars = int(message.text)
+        bot.send_message(message.chat.id, "Пришли фото:")
+        bot.register_next_step_handler(message, add_step_3, name, stars)
+    except: bot.send_message(message.chat.id, "Ошибка, надо число.")
+
+def add_step_3(message, name, stars):
+    if message.photo:
+        pid = message.photo[-1].file_id
+        bot.send_message(message.chat.id, "Описание:")
+        bot.register_next_step_handler(message, add_step_4, name, stars, pid)
+
+def add_step_4(message, name, stars, pid):
+    cards.append({'name': name, 'stars': stars, 'photo': pid, 'desc': message.text})
+    save_db(cards, 'cards')
+    bot.send_message(message.chat.id, f"✅ Карта {name} ({stars}⭐) добавлена!")
+
+@bot.message_handler(commands=['start', 'help'])
+def help_cmd(message):
+    bot.send_message(message.chat.id, "Меню:", reply_markup=main_menu(message.from_user.username))
+
+# Запуск
+bot.infinity_polling()

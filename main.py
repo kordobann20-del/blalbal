@@ -71,7 +71,7 @@ def start(m):
     if uid not in users_data:
         msg = bot.send_message(m.chat.id, "⚽️ Введите ваш игровой ник:")
         bot.register_next_step_handler(msg, reg_nick)
-    else: bot.send_message(m.chat.id, "⚽️ 8Главное меню:*/n/n Здесь вы можете увидеть все команды бота.", reply_markup=main_kb(uid))
+    else: bot.send_message(m.chat.id, "⚽️ Главное меню:", reply_markup=main_kb(uid))
 
 def reg_nick(m):
     uid = str(m.from_user.id)

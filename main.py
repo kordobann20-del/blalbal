@@ -5,601 +5,625 @@ import time
 import json
 import os
 
-# --- [1] КОНФИГУРАЦИЯ И НАСТРОЙКИ ---
+# --- [1] НАСТРОЙКИ ---
 TOKEN = "8660223435:AAF12SYO3Cv9Fb6du30sStGEyQSyAJFiTiE"
 ADMINS = ["merkafor", "Bju_Bet", "Nazikrrk"] 
 bot = telebot.TeleBot(TOKEN)
 
-# Пути к файлам базы данных
-FILES = {
+# Файлы базы данных
+DB_FILES = {
     'cards': 'cards.json',
     'colls': 'collections.json',
     'squads': 'squads.json',
     'users': 'users_data.json',
-    'bans': 'bans.json'
+    'bans': 'bans.json',
+    'promos': 'promos.json'
 }
 
-# Характеристики редкости (Шанс, Очки за выпадение, Сила в ПВП)
-STATS = {
-    1: {"chance": 40, "score": 1000, "atk": 100},
-    2: {"chance": 30, "score": 3000, "atk": 300},
-    3: {"chance": 20, "score": 5000, "atk": 600},
-    4: {"chance": 10, "score": 8000, "atk": 1000},
-    5: {"chance": 5, "score": 15000, "atk": 2000}
+# ШАНСЫ НА ВЫПАДЕНИЕ КАРТ (Твои любимые настройки)
+RARITY_STATS = {
+    1: {"chance": 30, "score": 1000, "atk": 100},   # Обычные
+    2: {"chance": 30, "score": 3000, "atk": 450},   # Необычные
+    3: {"chance": 25, "score": 7500, "atk": 1000},  # Редкие
+    4: {"chance": 10, "score": 15000, "atk": 2500}, # Эпические
+    5: {"chance": 5,  "score": 30000, "atk": 5000}  # Легендарные
 }
 
-# Словари для корректного отображения позиций на русском
-POSITIONS_LABELS = {
-    "ГК": "Вратарь",
-    "ЛЗ": "Левый Защитник",
-    "ПЗ": "Правый Защитник",
-    "ЦП": "Центральный Полузащитник",
-    "ЛВ": "Левый Вингер",
-    "ПВ": "Правый Вингер",
-    "КФ": "Нападающий"
+# Названия позиций
+POSITIONS_RU = {
+    "ГК": "Вратарь", "ЛЗ": "Левый Защитник", "ПЗ": "Правый Защитник",
+    "ЦП": "Центральный Полузащитник", "ЛВ": "Левый Вингер", "ПВ": "Правый Вингер", "КФ": "Нападающий"
 }
 
-# Данные для формирования состава (индекс кнопки : название и код)
-POSITIONS_DATA = {
-    0: {"label": "🧤 Вратарь (ГК)", "code": "ГК"},
-    1: {"label": "🛡 ЛЗ", "code": "ЛЗ"},
-    2: {"label": "🛡 ПЗ", "code": "ПЗ"},
-    3: {"label": "👟 ЦП", "code": "ЦП"},
-    4: {"label": "⚡️ ЛВ", "code": "ЛВ"},
-    5: {"label": "⚡️ ПВ", "code": "ПВ"},
-    6: {"label": "🎯 Нападающий (КФ)", "code": "КФ"}
+# Схемы состава
+SQUAD_SLOTS = {
+    0: {"label": "🧤 ГК (Вратарь)", "code": "ГК"},
+    1: {"label": "🛡 ЛЗ (Защитник)", "code": "ЛЗ"},
+    2: {"label": "🛡 ПЗ (Защитник)", "code": "ПЗ"},
+    3: {"label": "👟 ЦП (Полузащитник)", "code": "ЦП"},
+    4: {"label": "⚡️ ЛВ (Вингер)", "code": "ЛВ"},
+    5: {"label": "⚡️ ПВ (Вингер)", "code": "ПВ"},
+    6: {"label": "🎯 КФ (Нападающий)", "code": "КФ"}
 }
 
-# --- [2] ФУНКЦИИ РАБОТЫ С БАЗОЙ ДАННЫХ ---
-def load_db(key):
-    """Загрузка данных из JSON файла."""
-    if not os.path.exists(FILES[key]):
-        # Если файла нет, создаем пустой список или словарь в зависимости от типа данных
+# Словари для КД (в оперативной памяти)
+roll_cooldowns = {}
+pvp_cooldowns = {}
+
+# --- [2] РАБОТА С БАЗОЙ ДАННЫХ ---
+def load_data(key):
+    """Загрузка данных из JSON файла"""
+    if not os.path.exists(DB_FILES[key]):
         default = [] if key in ['cards', 'bans'] else {}
-        with open(FILES[key], 'w', encoding='utf-8') as f:
+        with open(DB_FILES[key], 'w', encoding='utf-8') as f:
             json.dump(default, f, ensure_ascii=False, indent=4)
         return default
-    
-    with open(FILES[key], 'r', encoding='utf-8') as f:
+    with open(DB_FILES[key], 'r', encoding='utf-8') as f:
         try:
             return json.load(f)
-        except json.JSONDecodeError:
+        except:
             return [] if key in ['cards', 'bans'] else {}
 
-def save_db(data, key):
-    """Сохранение данных в JSON файл."""
-    with open(FILES[key], 'w', encoding='utf-8') as f:
+def save_data(data, key):
+    """Сохранение данных в JSON файл"""
+    with open(DB_FILES[key], 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 # --- [3] ВСПОМОГАТЕЛЬНЫЕ ПРОВЕРКИ ---
 def is_admin(user):
-    """Проверка, является ли пользователь администратором."""
+    """Проверка на права администратора"""
     return user.username and user.username.lower() in [a.lower() for a in ADMINS]
 
 def is_banned(user):
-    """Проверка, находится ли пользователь в черном списке."""
-    ban_list = load_db('bans')
-    username = user.username.lower() if user.username else None
-    user_id = str(user.id)
-    return (username in ban_list) or (user_id in ban_list)
+    """Проверка, забанен ли пользователь"""
+    bl = load_data('bans')
+    uid = str(user.id)
+    un = user.username.lower() if user.username else ""
+    return (un in bl) or (uid in bl)
 
-def get_total_power(uid):
-    """Расчет общей силы состава для ПВП арены."""
-    user_squads = load_db('squads')
-    squad = user_squads.get(str(uid), [None] * 7)
-    total_atk = 0
-    for player in squad:
-        if player:
-            stars = player.get('stars', 1)
-            total_atk += STATS[stars]['atk']
-    return total_atk
+def get_team_power(uid):
+    """Расчет общей силы состава игрока"""
+    sq = load_data('squads').get(str(uid), [None]*7)
+    power = 0
+    for p in sq:
+        if p:
+            power += RARITY_STATS[p['stars']]['atk']
+    return power
 
-# --- [4] ГЛАВНЫЕ КЛАВИАТУРЫ ---
-def get_main_keyboard(uid):
-    """Клавиатура главного меню."""
+# --- [4] КЛАВИАТУРЫ ---
+def main_kb(uid):
+    """Главное меню"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🎰 Крутить карту", "🗂 Коллекция")
     markup.row("📋 Состав", "👤 Профиль")
     markup.row("🏆 Топ очков", "🏟 ПВП Арена")
-    
-    # Кнопка админ-панели видна только админам
+    markup.row("🎟 Промокод", "👥 Рефералы")
     try:
-        user = bot.get_chat(uid)
-        if is_admin(user):
+        # Проверка админа для отображения кнопки
+        user_info = bot.get_chat(uid)
+        if is_admin(user_info):
             markup.add("🛠 Админ-панель")
     except:
         pass
     return markup
 
-def get_cancel_keyboard():
-    """Клавиатура для отмены действия."""
+def cancel_kb():
+    """Клавиатура отмены действия"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("❌ Отмена")
     return markup
 
-# --- [5] ОБРАБОТЧИКИ ОБЩИХ КОМАНД ---
-@bot.message_handler(func=lambda m: is_banned(m.from_user))
-def handle_banned(m):
-    bot.send_message(m.chat.id, "🚫 Ваш доступ к боту заблокирован администрацией.")
+def admin_kb():
+    """Меню администратора"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("➕ Добавить карту", "🗑 Удалить карту")
+    markup.row("🎟 +Промокод", "🧨 Обнулить бота")
+    markup.row("🚫 Забанить игрока", "✅ Разбанить игрока")
+    markup.row("🏠 Назад в меню")
+    return markup
 
-@bot.message_handler(func=lambda m: m.text == "❌ Отмена")
-def handle_global_cancel(m):
-    uid = str(m.from_user.id)
-    bot.send_message(m.chat.id, "Действие отменено. Возврат в главное меню.", reply_markup=get_main_keyboard(uid))
-
+# --- [5] СТАРТ И РЕФЕРАЛЬНАЯ СИСТЕМА ---
 @bot.message_handler(commands=['start'])
-def handle_start(m):
-    users_data = load_db('users')
+def start_cmd(m):
+    if is_banned(m.from_user):
+        return bot.send_message(m.chat.id, "🚫 Вы забанены и не можете использовать бота.")
+    
+    u_db = load_data('users')
     uid = str(m.from_user.id)
-    username = f"@{m.from_user.username}" if m.from_user.username else f"id{uid}"
     
-    # Регистрация или обновление данных пользователя
-    users_data[uid] = {
-        "nick": m.from_user.first_name,
-        "score": users_data.get(uid, {}).get('score', 0),
-        "username": username
-    }
-    save_db(users_data, 'users')
+    # Реферальная логика
+    ref_id = None
+    args = m.text.split()
+    if len(args) > 1:
+        ref_id = args[1]
+
+    if uid not in u_db:
+        uname = f"@{m.from_user.username}" if m.from_user.username else f"id{uid}"
+        u_db[uid] = {
+            "nick": m.from_user.first_name, 
+            "score": 0, 
+            "username": uname, 
+            "used_promos": [],
+            "bonus_luck": 1.0,
+            "referals_count": 0
+        }
+        # Награда пригласившему
+        if ref_id and ref_id in u_db and ref_id != uid:
+            u_db[ref_id]["score"] += 5000
+            u_db[ref_id]["referals_count"] += 1
+            bot.send_message(int(ref_id), "👥 По вашей ссылке зашел новый игрок! Вам начислено 5,000 очков.")
+
+    save_data(u_db, 'users')
+    bot.send_message(m.chat.id, f"⚽️ Привет, {m.from_user.first_name}! Это футбольный бот.\n\nКрути карты, собирай состав и сражайся на арене!", reply_markup=main_kb(uid))
+
+@bot.message_handler(func=lambda m: m.text == "👥 Рефералы")
+def referals_view(m):
+    if is_banned(m.from_user): return
+    uid = m.from_user.id
+    u_db = load_data('users')
+    bot_name = bot.get_me().username
+    ref_link = f"https://t.me/{bot_name}?start={uid}"
     
-    bot.send_message(m.chat.id, f"⚽️ Добро пожаловать, {m.from_user.first_name}!", reply_markup=get_main_keyboard(uid))
+    count = u_db.get(str(uid), {}).get("referals_count", 0)
+    
+    msg = (f"👥 **РЕФЕРАЛЬНАЯ ПРОГРАММА**\n\n"
+           f"Приглашайте друзей и получайте бонусы!\n"
+           f"За каждого друга: **5,000 очков**.\n\n"
+           f"Вы пригласили: **{count}** чел.\n\n"
+           f"Ваша ссылка для приглашения:\n`{ref_link}`")
+    bot.send_message(m.chat.id, msg, parse_mode="Markdown")
 
-# --- [6] ЛОГИКА ВЫПАДЕНИЯ КАРТ (ROLL) ---
-user_cooldowns = {}
+# --- [6] ПРОМОКОДЫ ---
+@bot.message_handler(func=lambda m: m.text == "🎟 Промокод")
+def promo_entry(m):
+    if is_banned(m.from_user): return
+    bot.send_message(m.chat.id, "🎟 Введите промокод:", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, promo_process)
 
+def promo_process(m):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    
+    code = m.text.strip().upper()
+    uid = str(m.from_user.id)
+    u_db = load_data('users')
+    p_db = load_data('promos')
+    
+    if code not in p_db:
+        return bot.send_message(m.chat.id, "❌ Такого промокода не существует.", reply_markup=main_kb(uid))
+    
+    if code in u_db[uid].get('used_promos', []):
+        return bot.send_message(m.chat.id, "❌ Вы уже вводили этот промокод!", reply_markup=main_kb(uid))
+    
+    promo_data = p_db[code]
+    if promo_data['type'] == 'points':
+        u_db[uid]['score'] += int(promo_data['value'])
+        res_msg = f"✅ Промокод активирован! Вы получили **{promo_data['value']}** очков."
+    else:
+        u_db[uid]['bonus_luck'] = float(promo_data['value'])
+        res_msg = f"✅ Промокод активирован! Ваша удача увеличена в **{promo_data['value']} раз** на следующую крутку!"
+    
+    u_db[uid].setdefault('used_promos', []).append(code)
+    save_data(u_db, 'users')
+    bot.send_message(m.chat.id, res_msg, reply_markup=main_kb(uid), parse_mode="Markdown")
+
+# --- [7] КРУТКА КАРТ (ROLL) ---
 @bot.message_handler(func=lambda m: m.text == "🎰 Крутить карту")
-def handle_roll(m):
+def roll_handler(m):
+    if is_banned(m.from_user): return
     uid = str(m.from_user.id)
+    u_db = load_data('users')
     now = time.time()
     
-    # Кулдаун 3 часа (10800 секунд) для обычных игроков
+    # КД 3 часа для обычных игроков
     if not is_admin(m.from_user):
-        if uid in user_cooldowns and now - user_cooldowns[uid] < 10800:
-            remaining = int(10800 - (now - user_cooldowns[uid]))
-            hours = remaining // 3600
-            minutes = (remaining % 3600) // 60
-            return bot.send_message(m.chat.id, f"⏳ Перезарядка! Попробуйте через {hours}ч {minutes}м.")
+        if uid in roll_cooldowns and now - roll_cooldowns[uid] < 10800:
+            rem = int(10800 - (now - roll_cooldowns[uid]))
+            return bot.send_message(m.chat.id, f"⏳ Кулдаун! Попробуйте через {rem//3600}ч {(rem%3600)//60}м")
 
-    all_cards = load_db('cards')
-    if not all_cards:
-        return bot.send_message(m.chat.id, "❌ В игре пока нет доступных карт. Ждите обновлений от админов!")
+    cards = load_data('cards')
+    if not cards:
+        return bot.send_message(m.chat.id, "❌ В магазине пока нет доступных карт.")
 
-    # Выбор редкости на основе шансов
-    weights = [STATS[s]['chance'] for s in STATS.keys()]
-    selected_stars = random.choices(list(STATS.keys()), weights=weights)[0]
+    # Рассчет шансов с учетом множителя промокода
+    luck_multiplier = u_db[uid].get('bonus_luck', 1.0)
+    weights = []
+    for star in sorted(RARITY_STATS.keys()):
+        base_chance = RARITY_STATS[star]['chance']
+        if star >= 4: # Бонус только для редких (4 и 5 звезд)
+            base_chance *= luck_multiplier
+        weights.append(base_chance)
+
+    selected_rarity = random.choices(list(sorted(RARITY_STATS.keys())), weights=weights)[0]
+    pool = [c for c in cards if c['stars'] == selected_rarity]
     
-    # Фильтруем карты по выбранной редкости
-    possible_cards = [c for c in all_cards if c['stars'] == selected_stars]
-    if not possible_cards:
-        possible_cards = all_cards # Если карт такой редкости нет, берем любую
-    
-    won_card = random.choice(possible_cards)
-    user_cooldowns[uid] = now
-    
-    # Обновление коллекции и очков
-    user_collections = load_db('colls')
-    users_stats = load_db('users')
-    
-    if uid not in user_collections:
-        user_collections[uid] = []
+    if not pool: # На случай если админ не добавил карты какой-то редкости
+        pool = cards
         
-    is_duplicate = any(card['name'] == won_card['name'] for card in user_collections[uid])
+    won_card = random.choice(pool)
     
-    # Очки: за повторку даем 30%
-    reward_points = int(STATS[won_card['stars']]['score'] * (0.3 if is_duplicate else 1))
+    # Сброс КД и бонуса удачи
+    roll_cooldowns[uid] = now
+    u_db[uid]['bonus_luck'] = 1.0
+
+    colls = load_data('colls')
+    if uid not in colls: colls[uid] = []
     
-    if not is_duplicate:
-        user_collections[uid].append(won_card)
-        save_db(user_collections, 'colls')
+    # Проверка на дубликат
+    is_duplicate = any(c['name'] == won_card['name'] for c in colls[uid])
+    
+    if is_duplicate:
+        points_gain = int(RARITY_STATS[won_card['stars']]['score'] * 0.3)
+        status_text = "🔄 Повторка (Получено 30% стоимости)"
+    else:
+        points_gain = RARITY_STATS[won_card['stars']]['score']
+        status_text = "✨ Новая карта в коллекцию!"
+        colls[uid].append(won_card)
+        save_data(colls, 'colls')
 
-    users_stats[uid]['score'] = users_stats.get(uid, {}).get('score', 0) + reward_points
-    save_db(users_stats, 'users')
+    u_db[uid]['score'] += points_gain
+    save_data(u_db, 'users')
 
-    # Формирование сообщения
-    status_text = "✨ НОВАЯ КАРТА!" if not is_duplicate else "♻️ ПОВТОРКА"
-    position_name = POSITIONS_LABELS.get(won_card['pos'].upper(), won_card['pos'])
+    stars_str = "⭐️" * won_card['stars']
+    pos_full = POSITIONS_RU.get(won_card['pos'].upper(), won_card['pos'])
     
     caption = (
-        f"🏆 **{won_card['name']}**\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"ℹ️ Статус: {status_text}\n"
-        f"🎯 Позиция: {position_name}\n"
-        f"⭐️ Редкость: {'⭐' * won_card['stars']}\n"
-        f"💠 Очки: +{reward_points:,}\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"💰 Ваш баланс: {users_stats[uid]['score']:,} очков"
+        f"⚽️ **{won_card['name']}**\n\n"
+        f"📊 Рейтинг: {stars_str}\n"
+        f"🎯 Позиция: {pos_full}\n\n"
+        f"💠 {status_text}\n"
+        f"💰 Очки: +{points_gain:,}\n"
+        f"📈 Ваш баланс: {u_db[uid]['score']:,}"
     )
-    
     bot.send_photo(m.chat.id, won_card['photo'], caption=caption, parse_mode="Markdown")
-
-# --- [7] ПРОФИЛЬ И ТОП-10 ---
-@bot.message_handler(func=lambda m: m.text == "👤 Профиль")
-def handle_profile(m):
-    users_data = load_db('users')
-    user_collections = load_db('colls')
-    uid = str(m.from_user.id)
-    
-    # Обновляем юзернейм при каждом просмотре профиля
-    current_username = f"@{m.from_user.username}" if m.from_user.username else f"id{uid}"
-    if uid not in users_data:
-        users_data[uid] = {"nick": m.from_user.first_name, "score": 0, "username": current_username}
-    else:
-        users_data[uid]["username"] = current_username
-    save_db(users_data, 'users')
-
-    user = users_data[uid]
-    collection_count = len(user_collections.get(uid, []))
-    power = get_total_power(uid)
-    
-    profile_text = (
-        f"👤 **ВАШ ИГРОВОЙ ПРОФИЛЬ**\n\n"
-        f"📝 Имя: {user['nick']}\n"
-        f"🔗 Юзернейм: {user['username']}\n"
-        f"💠 Очки: `{user['score']:,}`\n"
-        f"🗂 Коллекция: {collection_count} шт.\n"
-        f"🛡 Сила состава: {power}"
-    )
-    bot.send_message(m.chat.id, profile_text, parse_mode="Markdown")
-
-@bot.message_handler(func=lambda m: m.text == "🏆 Топ очков")
-def handle_top(m):
-    users_data = load_db('users')
-    # Сортировка по очкам (топ 10)
-    sorted_users = sorted(users_data.items(), key=lambda x: x[1]['score'], reverse=True)[:10]
-    
-    top_text = "🏆 **ТОП-10 ЛУЧШИХ ИГРОКОВ:**\n\n"
-    for index, (uid, data) in enumerate(sorted_users, 1):
-        name = data.get('username', f"id{uid}")
-        top_text += f"{index}. {name} — `{data['score']:,}` очков\n"
-    
-    bot.send_message(m.chat.id, top_text, parse_mode="Markdown")
 
 # --- [8] ПВП АРЕНА ---
 @bot.message_handler(func=lambda m: m.text == "🏟 ПВП Арена")
-def handle_pvp_menu(m):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🎲 Случайный противник", callback_data="pvp_random"))
-    markup.add(types.InlineKeyboardButton("🔍 Найти по @username", callback_data="pvp_search"))
-    bot.send_message(m.chat.id, "🏟 **ДОБРО ПОЖАЛОВАТЬ НА АРЕНУ**\n\nЗдесь побеждает тот, чей состав сильнее. Победитель получает +1,000 очков!", reply_markup=markup)
+def pvp_menu(m):
+    if is_banned(m.from_user): return
+    uid = str(m.from_user.id)
+    now = time.time()
+    
+    if not is_admin(m.from_user):
+        if uid in pvp_cooldowns and now - pvp_cooldowns[uid] < 900:
+            rem = int(900 - (now - pvp_cooldowns[uid]))
+            return bot.send_message(m.chat.id, f"⏳ Ваши футболисты отдыхают. Ждите {rem//60} мин.")
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🎲 Случайный матч", callback_data="pvp_random"))
+    kb.add(types.InlineKeyboardButton("🔍 Найти по нику", callback_data="pvp_search"))
+    bot.send_message(m.chat.id, "🏟 **ПВП АРЕНА**\n\nСоберите состав из 7 игроков в меню '📋 Состав' и докажите, кто лучший!", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "pvp_search")
-def pvp_callback_search(call):
-    msg = bot.send_message(call.message.chat.id, "Введите @username игрока, которого хотите вызвать на бой (или нажмите /cancel):")
-    bot.register_next_step_handler(msg, pvp_step_search_execute)
+def pvp_search_start(call):
+    bot.send_message(call.message.chat.id, "Введите @username соперника:")
+    bot.register_next_step_handler(call.message, pvp_search_finish)
 
-def pvp_step_search_execute(m):
-    if m.text == "/cancel" or m.text == "❌ Отмена":
-        return handle_global_cancel(m)
-        
-    target_username = m.text.replace("@", "").lower().strip()
-    users_data = load_db('users')
+def pvp_search_finish(m):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    target_un = m.text.replace("@", "").lower().strip()
+    u_db = load_data('users')
     
-    found_id = None
-    for uid, data in users_data.items():
-        if data.get('username', '').replace("@", "").lower() == target_username:
-            found_id = uid
+    target_id = None
+    for uid, data in u_db.items():
+        if data.get('username', '').replace("@", "").lower() == target_un:
+            target_id = uid
             break
             
-    if found_id:
-        process_pvp_battle(m.chat.id, str(m.from_user.id), found_id)
+    if target_id:
+        run_battle_logic(m.chat.id, str(m.from_user.id), target_id)
     else:
-        bot.send_message(m.chat.id, "❌ Игрок с таким юзернеймом не найден в базе данных.")
+        bot.send_message(m.chat.id, "❌ Игрок не найден в нашей базе.")
 
 @bot.callback_query_handler(func=lambda c: c.data == "pvp_random")
-def pvp_callback_random(call):
-    users_data = load_db('users')
+def pvp_random_start(call):
+    u_db = load_data('users')
     my_id = str(call.from_user.id)
+    # Ищем тех, у кого сила больше 0
+    opponents = [uid for uid in u_db if uid != my_id and get_team_power(uid) > 0]
     
-    # Ищем игроков, у которых есть хоть кто-то в составе
-    possible_opponents = [uid for uid in users_data if uid != my_id and get_total_power(uid) > 0]
-    
-    if not possible_opponents:
-        return bot.answer_callback_query(call.id, "❌ Противников пока нет. Попробуйте позже!", show_alert=True)
-    
-    opponent_id = random.choice(possible_opponents)
-    process_pvp_battle(call.message.chat.id, my_id, opponent_id)
+    if not opponents:
+        return bot.answer_callback_query(call.id, "Соперников пока нет. Все тренируются!", show_alert=True)
+        
+    enemy_id = random.choice(opponents)
+    run_battle_logic(call.message.chat.id, my_id, enemy_id)
 
-def process_pvp_battle(chat_id, player1_id, player2_id):
-    users_data = load_db('users')
-    p1_power = get_total_power(player1_id)
-    p2_power = get_total_power(player2_id)
+def run_battle_logic(chat_id, p1_id, p2_id):
+    u_db = load_data('users')
+    p1_power = get_team_power(p1_id)
+    p2_power = get_team_power(p2_id)
     
     if p1_power == 0:
-        return bot.send_message(chat_id, "❌ У вас пустой состав! Соберите команду в меню '📋 Состав'.")
+        return bot.send_message(chat_id, "❌ Ваш состав пуст! Вы не можете играть в ПВП.")
 
-    # Вероятность победы зависит от силы
-    total_chance = p1_power + p2_power
-    winner_id = random.choices([player1_id, player2_id], weights=[p1_power, p2_power])[0]
+    # Логика шансов: сила возводится в степень для большего разрыва, но шанс есть у каждого
+    weight1 = p1_power ** 1.2
+    weight2 = p2_power ** 1.2
+    
+    winner_id = random.choices([p1_id, p2_id], weights=[weight1, weight2])[0]
     
     # Награда победителю
-    users_data[winner_id]['score'] += 1000
-    save_db(users_data, 'users')
+    u_db[winner_id]['score'] += 1000
+    save_data(u_db, 'users')
     
-    p1_name = users_data[player1_id].get('username', 'Игрок 1')
-    p2_name = users_data[player2_id].get('username', 'Игрок 2')
-    
-    result_text = (
-        f"🏟 **РЕЗУЛЬТАТ БОЯ:**\n\n"
-        f"👤 {p1_name} (Сила: {p1_power})\n"
-        f"       🆚\n"
-        f"👤 {p2_name} (Сила: {p2_power})\n\n"
-        f"🏆 **ПОБЕДИТЕЛЬ:** {users_data[winner_id].get('username')}! (+1,000 очков)"
-    )
-    bot.send_message(chat_id, result_text, parse_mode="Markdown")
+    # КД только инициатору
+    p1_info = bot.get_chat(int(p1_id))
+    if not is_admin(p1_info):
+        pvp_cooldowns[p1_id] = time.time()
 
-# --- [9] ПОЛНАЯ АДМИН-ПАНЕЛЬ С ОТМЕНОЙ И ПОДТВЕРЖДЕНИЕМ ---
-@bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
-def handle_admin_menu(m):
-    if not is_admin(m.from_user): return
-    
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("➕ Добавить карту", "📝 Изменить карту")
-    markup.row("🗑 Удалить карту", "🧨 Обнулить бота")
-    markup.row("🚫 Забанить", "✅ Разбанить")
-    markup.row("🏠 Назад в меню")
-    bot.send_message(m.chat.id, "🛠 **ПАНЕЛЬ АДМИНИСТРАТОРА:**", reply_markup=markup)
+    battle_msg = (f"🏟 **МАТЧ ОКОНЧЕН**\n\n"
+                  f"🛡 {u_db[p1_id]['nick']} (Сила: {p1_power})\n"
+                  f"       **VS**\n"
+                  f"🛡 {u_db[p2_id]['nick']} (Сила: {p2_power})\n\n"
+                  f"🏆 Победитель: **{u_db[winner_id]['username']}**\n"
+                  f"💰 Приз: +1,000 очков")
+    bot.send_message(chat_id, battle_msg)
 
-# --- АДМИН: ДОБАВЛЕНИЕ КАРТЫ ---
-@bot.message_handler(func=lambda m: m.text == "➕ Добавить карту")
-def admin_add_step1(m):
-    if not is_admin(m.from_user): return
-    bot.send_message(m.chat.id, "Введите ФИО или имя игрока:", reply_markup=get_cancel_keyboard())
-    bot.register_next_step_handler(m, admin_add_step2)
-
-def admin_add_step2(m):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    player_name = m.text
-    bot.send_message(m.chat.id, "Введите позицию (ГК, ЛЗ, ПЗ, ЦП, ЛВ, ПВ, КФ):", reply_markup=get_cancel_keyboard())
-    bot.register_next_step_handler(m, admin_add_step3, player_name)
-
-def admin_add_step3(m, name):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    position = m.text.upper().strip()
-    bot.send_message(m.chat.id, "Введите редкость (число звезд от 1 до 5):", reply_markup=get_cancel_keyboard())
-    bot.register_next_step_handler(m, admin_add_step4, name, position)
-
-def admin_add_step4(m, name, pos):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    try:
-        stars = int(m.text)
-        if not (1 <= stars <= 5): raise ValueError
-        bot.send_message(m.chat.id, "Теперь отправьте ФОТОГРАФИЮ карты игрока:", reply_markup=get_cancel_keyboard())
-        bot.register_next_step_handler(m, admin_add_final, name, pos, stars)
-    except ValueError:
-        bot.send_message(m.chat.id, "❌ Ошибка! Нужно ввести число от 1 до 5. Попробуйте снова:")
-        bot.register_next_step_handler(m, admin_add_step4, name, pos)
-
-def admin_add_final(m, name, pos, stars):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    if not m.photo:
-        bot.send_message(m.chat.id, "❌ Это не фотография. Пожалуйста, отправьте фото:")
-        bot.register_next_step_handler(m, admin_add_final, name, pos, stars)
-        return
-
-    cards_db = load_db('cards')
-    cards_db.append({
-        "name": name,
-        "pos": pos,
-        "stars": stars,
-        "photo": m.photo[-1].file_id
-    })
-    save_db(cards_db, 'cards')
-    
+# --- [9] ПРОФИЛЬ, ТОП И КОЛЛЕКЦИЯ ---
+@bot.message_handler(func=lambda m: m.text == "👤 Профиль")
+def profile_view(m):
+    if is_banned(m.from_user): return
     uid = str(m.from_user.id)
-    bot.send_message(m.chat.id, f"✅ Карта '{name}' успешно добавлена в игру!", reply_markup=get_main_keyboard(uid))
-
-# --- АДМИН: УДАЛЕНИЕ КАРТЫ (ИСПРАВЛЕНО) ---
-@bot.message_handler(func=lambda m: m.text == "🗑 Удалить карту")
-def admin_delete_list(m):
-    if not is_admin(m.from_user): return
-    cards_db = load_db('cards')
-    if not cards_db:
-        return bot.send_message(m.chat.id, "❌ Список карт пуст.")
-
-    markup = types.InlineKeyboardMarkup()
-    for card in cards_db:
-        markup.add(types.InlineKeyboardButton(f"❌ Удалить {card['name']} ({card['stars']}⭐)", callback_data=f"adm_del_{card['name']}"))
+    u_db = load_data('users')
+    colls = load_data('colls')
     
-    bot.send_message(m.chat.id, "Выберите карту, которую хотите навсегда удалить из игры:", reply_markup=markup)
+    user = u_db[uid]
+    msg = (f"👤 **ВАШ ПРОФИЛЬ**\n\n"
+           f"📝 Имя: {user['nick']}\n"
+           f"🔗 Юзер: {user['username']}\n"
+           f"💠 Очки: `{user['score']:,}`\n"
+           f"🗂 Коллекция: {len(colls.get(uid, []))} шт.\n"
+           f"🛡 Сила команды: {get_team_power(uid)}")
+    bot.send_message(m.chat.id, msg, parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("adm_del_"))
-def admin_delete_execute(call):
-    card_name = call.data.replace("adm_del_", "")
-    cards_db = load_db('cards')
+@bot.message_handler(func=lambda m: m.text == "🏆 Топ очков")
+def top_view(m):
+    if is_banned(m.from_user): return
+    u_db = load_data('users')
+    top_list = sorted(u_db.items(), key=lambda x: x[1]['score'], reverse=True)[:10]
     
-    # Фильтруем список, исключая удаляемую карту
-    updated_cards = [c for c in cards_db if c['name'] != card_name]
-    save_db(updated_cards, 'cards')
-    
-    bot.answer_callback_query(call.id, f"Карта {card_name} удалена")
-    bot.edit_message_text(f"✅ Карта **{card_name}** была успешно удалена из системы.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    text = "🏆 **ТОП-10 ИГРОКОВ ПО ОЧКАМ:**\n\n"
+    for i, (uid, data) in enumerate(top_list, 1):
+        text += f"{i}. {data['username']} — `{data['score']:,}`\n"
+    bot.send_message(m.chat.id, text, parse_mode="Markdown")
 
-# --- АДМИН: ИЗМЕНЕНИЕ КАРТЫ ---
-@bot.message_handler(func=lambda m: m.text == "📝 Изменить карту")
-def admin_edit_list(m):
-    if not is_admin(m.from_user): return
-    cards_db = load_db('cards')
-    if not cards_db: return bot.send_message(m.chat.id, "Карт нет.")
-
-    markup = types.InlineKeyboardMarkup()
-    for card in cards_db:
-        markup.add(types.InlineKeyboardButton(f"📝 {card['name']}", callback_data=f"adm_ed_sel_{card['name']}"))
-    bot.send_message(m.chat.id, "Какую карту вы хотите отредактировать?", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("adm_ed_sel_"))
-def admin_edit_input(call):
-    card_name = call.data.replace("adm_ed_sel_", "")
-    bot.send_message(call.message.chat.id, f"Вы редактируете: {card_name}\n\nВведите новые данные в формате:\n`Новое Имя, Позиция, Звезды` (через запятую)", parse_mode="Markdown", reply_markup=get_cancel_keyboard())
-    bot.register_next_step_handler(call.message, admin_edit_save, card_name)
-
-def admin_edit_save(m, old_name):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    try:
-        cards_db = load_db('cards')
-        data_parts = m.text.split(",")
-        new_name = data_parts[0].strip()
-        new_pos = data_parts[1].strip().upper()
-        new_stars = int(data_parts[2].strip())
-        
-        for card in cards_db:
-            if card['name'] == old_name:
-                card['name'], card['pos'], card['stars'] = new_name, new_pos, new_stars
-                break
-        save_db(cards_db, 'cards')
-        
-        uid = str(m.from_user.id)
-        bot.send_message(m.chat.id, f"✅ Данные карты {new_name} успешно обновлены!", reply_markup=get_main_keyboard(uid))
-    except:
-        bot.send_message(m.chat.id, "❌ Ошибка формата! Введите: Имя, Позиция, Звезды")
-        bot.register_next_step_handler(m, admin_edit_save, old_name)
-
-# --- АДМИН: ОБНУЛЕНИЕ (С ПОДТВЕРЖДЕНИЕМ) ---
-@bot.message_handler(func=lambda m: m.text == "🧨 Обнулить бота")
-def admin_nuke_confirmation(m):
-    if not is_admin(m.from_user): return
-    
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("✅ ДА, ПОЛНОЕ ОБНУЛЕНИЕ", "❌ НЕТ, Я ПЕРЕДУМАЛ")
-    bot.send_message(m.chat.id, "🚨 **ВНИМАНИЕ!**\n\nЭто действие удалит ВСЕ очки, коллекции и составы у всех игроков. Это нельзя отменить. Вы уверены?", parse_mode="Markdown", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == "✅ ДА, ПОЛНОЕ ОБНУЛЕНИЕ")
-def admin_nuke_execute(m):
-    if not is_admin(m.from_user): return
-    
-    users_db = load_db('users')
-    for uid in users_db:
-        users_db[uid]['score'] = 0
-    save_db(users_db, 'users')
-    save_db({}, 'colls')
-    save_db({}, 'squads')
-    
-    uid = str(m.from_user.id)
-    bot.send_message(m.chat.id, "🧨 База данных успешно очищена. Все игроки обнулены.", reply_markup=get_main_keyboard(uid))
-
-@bot.message_handler(func=lambda m: m.text == "❌ НЕТ, Я ПЕРЕДУМАЛ")
-def admin_nuke_cancel(m):
-    handle_global_cancel(m)
-
-# --- АДМИН: БАН / РАЗБАН ---
-@bot.message_handler(func=lambda m: m.text == "🚫 Забанить")
-def admin_ban_step1(m):
-    if not is_admin(m.from_user): return
-    bot.send_message(m.chat.id, "Введите @username или ID игрока для блокировки:", reply_markup=get_cancel_keyboard())
-    bot.register_next_step_handler(m, admin_ban_execute)
-
-def admin_ban_execute(m):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    target = m.text.replace("@", "").lower().strip()
-    bans = load_db('bans')
-    bans.append(target)
-    save_db(bans, 'bans')
-    bot.send_message(m.chat.id, f"✅ Игрок '{target}' добавлен в черный список.", reply_markup=get_main_keyboard(str(m.from_user.id)))
-
-@bot.message_handler(func=lambda m: m.text == "✅ Разбанить")
-def admin_unban_step1(m):
-    if not is_admin(m.from_user): return
-    bot.send_message(m.chat.id, "Введите @username или ID для разблокировки:", reply_markup=get_cancel_keyboard())
-    bot.register_next_step_handler(m, admin_unban_execute)
-
-def admin_unban_execute(m):
-    if m.text == "❌ Отмена": return handle_global_cancel(m)
-    target = m.text.replace("@", "").lower().strip()
-    bans = load_db('bans')
-    if target in bans:
-        updated_bans = [b for b in bans if b != target]
-        save_db(updated_bans, 'bans')
-        bot.send_message(m.chat.id, f"✅ Игрок '{target}' разблокирован.", reply_markup=get_main_keyboard(str(m.from_user.id)))
-    else:
-        bot.send_message(m.chat.id, "❌ Данный игрок не найден в списке забаненных.")
-
-# --- [10] ПРОСМОТР КОЛЛЕКЦИИ ---
 @bot.message_handler(func=lambda m: m.text == "🗂 Коллекция")
-def handle_collection_menu(m):
-    markup = types.InlineKeyboardMarkup()
+def collection_view(m):
+    if is_banned(m.from_user): return
+    kb = types.InlineKeyboardMarkup()
     for i in range(1, 6):
-        markup.add(types.InlineKeyboardButton(f"{'⭐' * i} Показать категорию", callback_data=f"view_coll_{i}"))
-    bot.send_message(m.chat.id, "🗂 **ВАША КОЛЛЕКЦИЯ КАРТ**\n\nВыберите редкость для просмотра:", reply_markup=markup)
+        kb.add(types.InlineKeyboardButton(f"{'⭐️'*i} Просмотр", callback_data=f"show_stars_{i}"))
+    bot.send_message(m.chat.id, "🗂 **ВАША КОЛЛЕКЦИЯ**\nВыберите редкость:", reply_markup=kb)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("view_coll_"))
-def callback_collection_list(call):
-    stars = int(call.data.split("_")[2])
+@bot.callback_query_handler(func=lambda c: c.data.startswith("show_stars_"))
+def collection_stars_list(call):
+    stars = int(call.data.split("_")[-1])
     uid = str(call.from_user.id)
-    all_colls = load_db('colls')
-    
-    my_cards = [c for c in all_colls.get(uid, []) if c['stars'] == stars]
+    my_cards = [c for c in load_data('colls').get(uid, []) if c['stars'] == stars]
     
     if not my_cards:
-        return bot.answer_callback_query(call.id, "У вас нет карт такой редкости!", show_alert=True)
+        return bot.answer_callback_query(call.id, "У вас нет карт этой редкости!", show_alert=True)
     
-    text = f"🗂 **ВАШИ КАРТЫ {stars}⭐:**\n\n"
-    for card in my_cards:
-        text += f"• {card['name']} ({card['pos']})\n"
-    
-    bot.send_message(call.message.chat.id, text, parse_mode="Markdown")
+    text = f"🗂 **КАРТЫ {stars}⭐️:**\n\n"
+    for c in my_cards:
+        text += f"• {c['name']} ({c['pos']})\n"
+    bot.send_message(call.message.chat.id, text)
 
-# --- [11] УПРАВЛЕНИЕ СОСТАВОМ (ПОЛНАЯ ЛОГИКА) ---
+# --- [10] УПРАВЛЕНИЕ СОСТАВОМ ---
 @bot.message_handler(func=lambda m: m.text == "📋 Состав")
-def handle_squad_menu(m):
-    bot.send_message(m.chat.id, "📋 **ВАШ ТЕКУЩИЙ СОСТАВ:**\n\nНажмите на позицию, чтобы выбрать игрока из коллекции.", reply_markup=get_squad_markup(m.from_user.id))
+def squad_menu(m):
+    if is_banned(m.from_user): return
+    bot.send_message(m.chat.id, "📋 **ВАШ ТЕКУЩИЙ СОСТАВ:**\nНажмите на кнопку, чтобы изменить игрока.", reply_markup=get_squad_markup(m.from_user.id))
 
 def get_squad_markup(uid):
-    user_squads = load_db('squads')
-    squad = user_squads.get(str(uid), [None] * 7)
+    squad = load_data('squads').get(str(uid), [None]*7)
     markup = types.InlineKeyboardMarkup()
-    
     for i in range(7):
         player = squad[i]
-        pos_info = POSITIONS_DATA[i]
-        button_text = f"{pos_info['label']}: {player['name'] if player else '❌ Не выбран'}"
-        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"squad_idx_{i}"))
+        label = SQUAD_SLOTS[i]["label"]
+        btn_text = f"{label}: {player['name'] if player else '❌ Пусто'}"
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"edit_slot_{i}"))
     return markup
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("squad_idx_"))
-def callback_squad_select_player(call):
-    index = int(call.data.split("_")[2])
+@bot.callback_query_handler(func=lambda c: c.data.startswith("edit_slot_"))
+def squad_edit_slot(call):
+    slot_idx = int(call.data.split("_")[-1])
     uid = str(call.from_user.id)
-    pos_code = POSITIONS_DATA[index]["code"]
+    pos_needed = SQUAD_SLOTS[slot_idx]["code"]
     
-    user_colls = load_db('colls')
-    # Ищем все карты игрока, которые подходят на эту позицию
-    available_players = [c for c in user_colls.get(uid, []) if c['pos'].upper() == pos_code.upper()]
+    # Фильтруем коллекцию игрока по нужной позиции
+    my_col = load_data('colls').get(uid, [])
+    options = [c for c in my_col if c['pos'].upper() == pos_needed]
     
-    markup = types.InlineKeyboardMarkup()
-    for player in available_players:
-        markup.add(types.InlineKeyboardButton(f"{player['name']} ({player['stars']}⭐)", callback_data=f"squad_set_{index}_{player['name']}"))
+    kb = types.InlineKeyboardMarkup()
+    for card in options:
+        kb.add(types.InlineKeyboardButton(f"{card['name']} ({card['stars']}⭐)", callback_data=f"set_p_{slot_idx}_{card['name']}"))
+    kb.add(types.InlineKeyboardButton("🚫 Убрать игрока", callback_data=f"set_p_{slot_idx}_none"))
     
-    markup.add(types.InlineKeyboardButton("🚫 Очистить позицию", callback_data=f"squad_set_{index}_none"))
-    
-    bot.edit_message_text(f"Выберите игрока на позицию {pos_code}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    bot.edit_message_text(f"Выберите игрока на позицию {pos_needed}:", call.message.chat.id, call.message.message_id, reply_markup=kb)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("squad_set_"))
-def callback_squad_apply_change(call):
-    parts = call.data.split("_")
-    index = int(parts[2])
-    player_name = parts[3]
+@bot.callback_query_handler(func=lambda c: c.data.startswith("set_p_"))
+def squad_set_player(call):
+    params = call.data.split("_")
+    slot_idx = int(params[2])
+    player_name = params[3]
     uid = str(call.from_user.id)
     
-    user_squads = load_db('squads')
-    user_colls = load_db('colls')
+    s_db = load_data('squads')
+    if uid not in s_db: s_db[uid] = [None]*7
     
-    if uid not in user_squads:
-        user_squads[uid] = [None] * 7
-        
     if player_name == "none":
-        user_squads[uid][index] = None
+        s_db[uid][slot_idx] = None
     else:
-        # Находим полную инфу о карте в коллекции
-        card_data = next((c for c in user_colls.get(uid, []) if c['name'] == player_name), None)
-        user_squads[uid][index] = card_data
+        # Ищем карту в коллекции
+        c_db = load_data('colls').get(uid, [])
+        found_card = next((c for c in c_db if c['name'] == player_name), None)
+        s_db[uid][slot_idx] = found_card
         
-    save_db(user_squads, 'squads')
+    save_data(s_db, 'squads')
     bot.edit_message_text("✅ Состав обновлен!", call.message.chat.id, call.message.message_id, reply_markup=get_squad_markup(uid))
 
-# --- [12] КНОПКА ВОЗВРАТА ---
-@bot.message_handler(func=lambda m: m.text == "🏠 Назад в меню")
-def handle_back_home(m):
-    bot.send_message(m.chat.id, "⚽️ Вы вернулись в главное меню.", reply_markup=get_main_keyboard(str(m.from_user.id)))
+# --- [11] АДМИН-ПАНЕЛЬ: КАРТЫ И ПРОМО ---
+@bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
+def admin_panel_view(m):
+    if not is_admin(m.from_user): return
+    bot.send_message(m.chat.id, "🛠 **ПАНЕЛЬ УПРАВЛЕНИЯ**", reply_markup=admin_kb())
 
-# --- ЗАПУСК ---
-if __name__ == "__main__":
-    print(">>> Бот запущен и готов к работе! (Версия: Полная / RU)")
-    bot.infinity_polling()
+# Создание промокода
+@bot.message_handler(func=lambda m: m.text == "🎟 +Промокод")
+def admin_add_promo_1(m):
+    if not is_admin(m.from_user): return
+    bot.send_message(m.chat.id, "Напишите НАЗВАНИЕ промокода (например: FREE2026):", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, admin_add_promo_2)
+
+def admin_add_promo_2(m):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    p_name = m.text.strip().upper()
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔄 Прокруты (Очки)", callback_data=f"ap_type_{p_name}_points"))
+    kb.add(types.InlineKeyboardButton("🍀 Шансы (Удача)", callback_data=f"ap_type_{p_name}_luck"))
+    bot.send_message(m.chat.id, f"Какую награду даст `{p_name}`?", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("ap_type_"))
+def admin_add_promo_3(call):
+    data = call.data.split("_")
+    p_name = data[2]; p_type = data[3]
+    
+    prompt = "Введите количество ОЧКОВ:" if p_type == "points" else "Введите множитель ШАНСА (от 1.1 до 5.0):"
+    bot.send_message(call.message.chat.id, prompt)
+    bot.register_next_step_handler(call.message, admin_add_promo_fin, p_name, p_type)
+
+def admin_add_promo_fin(m, p_name, p_type):
+    try:
+        val = float(m.text)
+        if p_type == "luck" and (val < 1 or val > 5):
+            return bot.send_message(m.chat.id, "❌ Множитель удачи должен быть в пределах от 1 до 5!")
+        
+        p_db = load_data('promos')
+        p_db[p_name] = {"type": p_type, "value": val}
+        save_data(p_db, 'promos')
+        bot.send_message(m.chat.id, f"✅ Промокод `{p_name}` успешно создан!", reply_markup=admin_kb())
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка! Введите числовое значение.")
+
+# Добавление карты
+@bot.message_handler(func=lambda m: m.text == "➕ Добавить карту")
+def admin_add_card_1(m):
+    if not is_admin(m.from_user): return
+    bot.send_message(m.chat.id, "Введите имя футболиста:", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, admin_add_card_2)
+
+def admin_add_card_2(m):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    c_name = m.text
+    bot.send_message(m.chat.id, "Позиция (ГК, ЛЗ, ПЗ, ЦП, ЛВ, ПВ, КФ):", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, admin_add_card_3, c_name)
+
+def admin_add_card_3(m, c_name):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    c_pos = m.text.upper()
+    bot.send_message(m.chat.id, "Редкость (1-5 звезд):", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, admin_add_card_4, c_name, c_pos)
+
+def admin_add_card_4(m, c_name, c_pos):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    try:
+        c_stars = int(m.text)
+        bot.send_message(m.chat.id, "Пришлите ФОТО карты:", reply_markup=cancel_kb())
+        bot.register_next_step_handler(m, admin_add_card_fin, c_name, c_pos, c_stars)
+    except:
+        bot.send_message(m.chat.id, "Введите число!")
+
+def admin_add_card_fin(m, c_name, c_pos, c_stars):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    if not m.photo:
+        return bot.send_message(m.chat.id, "❌ Нужно прислать именно фото. Начните сначала.")
+    
+    db = load_data('cards')
+    db.append({
+        "name": c_name, 
+        "pos": c_pos, 
+        "stars": c_stars, 
+        "photo": m.photo[-1].file_id
+    })
+    save_data(db, 'cards')
+    bot.send_message(m.chat.id, f"✅ Игрок {c_name} успешно добавлен!", reply_markup=admin_kb())
+
+# Удаление карты
+@bot.message_handler(func=lambda m: m.text == "🗑 Удалить карту")
+def admin_delete_card_list(m):
+    if not is_admin(m.from_user): return
+    db = load_data('cards')
+    if not db: return bot.send_message(m.chat.id, "Список пуст.")
+    
+    kb = types.InlineKeyboardMarkup()
+    for card in db:
+        kb.add(types.InlineKeyboardButton(f"❌ {card['name']}", callback_data=f"adm_del_{card['name']}"))
+    bot.send_message(m.chat.id, "Выберите карту для удаления:", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("adm_del_"))
+def admin_delete_card_exec(call):
+    name = call.data.replace("adm_del_", "")
+    db = load_data('cards')
+    new_db = [c for c in db if c['name'] != name]
+    save_data(new_db, 'cards')
+    bot.edit_message_text(f"✅ Карта `{name}` удалена из базы.", call.message.chat.id, call.message.message_id)
+
+# Обнуление
+@bot.message_handler(func=lambda m: m.text == "🧨 Обнулить бота")
+def admin_reset_ask(m):
+    if not is_admin(m.from_user): return
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True).row("🚨 ДА, УДАЛИТЬ ВСЁ", "❌ НЕТ")
+    bot.send_message(m.chat.id, "⚠️ **ВНИМАНИЕ!** Это действие удалит прогресс, коллекции и составы ВСЕХ игроков. Продолжить?", reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text == "🚨 ДА, УДАЛИТЬ ВСЁ")
+def admin_reset_confirm(m):
+    if not is_admin(m.from_user): return
+    save_data({}, 'users')
+    save_data({}, 'colls')
+    save_data({}, 'squads')
+    bot.send_message(m.chat.id, "🧨 База данных полностью очищена.", reply_markup=admin_kb())
+
+# --- [12] БАН-СИСТЕМА ---
+@bot.message_handler(func=lambda m: m.text == "🚫 Забанить игрока")
+def admin_ban_1(m):
+    if not is_admin(m.from_user): return
+    bot.send_message(m.chat.id, "Введите @username или ID игрока для бана:", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, admin_ban_2)
+
+def admin_ban_2(m):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    target = m.text.replace("@", "").lower().strip()
+    bl = load_data('bans')
+    bl.append(target)
+    save_data(bl, 'bans')
+    bot.send_message(m.chat.id, f"✅ Игрок `{target}` заблокирован.", reply_markup=admin_kb())
+
+@bot.message_handler(func=lambda m: m.text == "✅ Разбанить игрока")
+def admin_unban_1(m):
+    if not is_admin(m.from_user): return
+    bot.send_message(m.chat.id, "Введите ник или ID для разбана:", reply_markup=cancel_kb())
+    bot.register_next_step_handler(m, admin_unban_2)
+
+def admin_unban_2(m):
+    if m.text == "❌ Отмена": return global_cancel(m)
+    target = m.text.replace("@", "").lower().strip()
+    bl = load_data('bans')
+    if target in bl:
+        bl.remove(target)
+        save_data(bl, 'bans')
+        bot.send_message(m.chat.id, f"✅ Игрок `{target}` разблокирован.")
+    else:
+        bot.send_message(m.chat.id, "Его и так нет в списке.")
+
+# --- [13] СЛУЖЕБНЫЕ КОМАНДЫ ---
+@bot.message_handler(func=lambda m: m.text == "🏠 Назад в меню")
+def back_home(m):
+    bot.send_message(m.chat.id, "Вы вернулись в главное меню.", reply_markup=main_kb(str(m.from_user.id)))
+
+@bot.message_handler(func=lambda m: m.text == "❌ Отмена")
+def global_cancel(m):
+    bot.send_message(m.chat.id, "Действие отменено.", reply_markup=main_kb(str(m.from_user.id)))
+
+# Запуск бота
+print("Бот запущен...")
+bot.infinity_polling()

@@ -99,7 +99,7 @@ def roll(m):
     
     if uid not in user_colls: user_colls[uid] = []
     is_dub = any(c['name'] == won['name'] for c in user_colls[uid])
-    status = "ПОВТОРКА" if is_dub else "НОВАЯ КАРТА"
+    status = "Повторка.." if is_dub else "Новая карта!"
     pts = int(STATS[won['stars']]['score'] * (0.3 if is_dub else 1))
     
     if not is_dub: 
@@ -110,9 +110,9 @@ def roll(m):
     save_db(users_data, 'users')
     
     cap = (f"⚽️ *{won['name']}* (\"{status}\")\n\n"
-           f"🎯 **Позиция:** {won['pos']}\n"
-           f"📊 **Рейтинг:** {'⭐'*won['stars']}\n\n"
-           f"💠 **Очки:** +{pts:,} | {users_data[uid]['score']:,}")
+           f"🎯 *Позиция:* {won['pos']}\n"
+           f"📊 *Рейтинг:* {'⭐'*won['stars']}\n\n"
+           f"💠 *Очки:* +{pts:,} | {users_data[uid]['score']:,}")
     bot.send_photo(m.chat.id, won['photo'], caption=cap, parse_mode="Markdown")
 
 # --- [6] КОЛЛЕКЦИЯ ---
@@ -315,7 +315,7 @@ def edit_card_fin(m, name):
 def profile(m):
     uid = str(m.from_user.id)
     d = users_data.get(uid, {"nick": "Player", "score": 0})
-    bot.send_message(m.chat.id, f"👤 *Профиль:*\n\n🪪 Ник: **{d['nick']}**\n💰 *Очки:* `{d['score']:,}`\n🆔 `{uid}`", parse_mode="Markdown")
+    bot.send_message(m.chat.id, f"👤 *Профиль:*\n\n🪪 *Ник:* **{d['nick']}**\n💰 *Очки:* `{d['score']:,}`\n🆔 `{uid}`", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🚫 Забанить")
 def ban_start(m):

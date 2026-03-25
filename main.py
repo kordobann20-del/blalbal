@@ -24,7 +24,6 @@ STATS = {
     5: {"chance": 5, "score": 15000, "atk": 2000}
 }
 
-# Словарь соответствия кнопок и кодов позиций
 POSITIONS_DATA = {
     0: {"label": "🧤 ГК", "code": "ГК"},
     1: {"label": "🛡 ЛЗ", "code": "ЛЗ"},
@@ -134,7 +133,53 @@ def top_scores(m):
         txt += f"{i}. **{display}** — `{d['score']:,}`\n"
     bot.send_message(m.chat.id, txt, parse_mode="Markdown")
 
-# --- [7] СОСТАВ (С ПРОВЕРКОЙ ПОЗИЦИЙ) ---
+# --- [7] АДМИН-ПАНЕЛЬ ---
+@bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
+def admin_panel(m):
+    if is_admin(m.from_user):
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("➕ Добавить карту", "📝 Изменить карту")
+        kb.row("🗑 Удалить карту", "🚫 Забанить")
+        kb.row("✅ Разбанить", "🧨 Обнулить бота")
+        kb.row("🏠 Назад в меню")
+        bot.send_message(m.chat.id, "🛠 **Управление игрой:**", reply_markup=kb)
+
+# Логика обнуления с подтверждением
+@bot.message_handler(func=lambda m: m.text == "🧨 Обнулить бота")
+def reset_confirm(m):
+    if not is_admin(m.from_user): return
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("✅ Да, обнулить всех", callback_data="confirm_reset_all"))
+    kb.add(types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_reset"))
+    bot.send_message(m.chat.id, "❗ **ВНИМАНИЕ!** Вы уверены, что хотите обнулить очки ВСЕМ игрокам? Это действие необратимо.", reply_markup=kb, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda c: c.data == "confirm_reset_all")
+def reset_logic(call):
+    if not is_admin(call.from_user): return
+    for uid in users_data:
+        users_data[uid]['score'] = 0
+    save_db(users_data, 'users')
+    bot.edit_message_text("🧨 **Все очки игроков обнулены!**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "Готово!")
+
+@bot.callback_query_handler(func=lambda c: c.data == "cancel_reset")
+def cancel_reset(call):
+    bot.edit_message_text("❌ Обнуление отменено.", call.message.chat.id, call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+# --- [8] ПРОЧИЕ ФУНКЦИИ (СОСТАВ, ПРОФИЛЬ, ПВП) ---
+
+@bot.message_handler(func=lambda m: m.text == "👤 Профиль")
+def profile(m):
+    uid = str(m.from_user.id)
+    d = users_data.get(uid, {"nick": "Игрок", "score": 0, "username": "n/a"})
+    count = len(user_colls.get(uid, []))
+    text = (f"👤 **Профиль:**\n\nИмя: **{d['nick']}**\nЮзер: @{d['username']}\n💠 Очки: `{d['score']:,}`\n🗂 Собрано карт: **{count}**\n🆔 `{uid}`")
+    bot.send_message(m.chat.id, text, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "📋 Состав")
+def squad_menu(m): bot.send_message(m.chat.id, "📋 **Твой состав:**", reply_markup=get_squad_kb(m.from_user.id), parse_mode="Markdown")
+
 def get_squad_kb(uid):
     kb = types.InlineKeyboardMarkup(); sq = user_squads.get(str(uid), [None]*7)
     for i in range(7):
@@ -144,26 +189,19 @@ def get_squad_kb(uid):
         kb.add(types.InlineKeyboardButton(txt, callback_data=f"slot_{i}"))
     return kb
 
-@bot.message_handler(func=lambda m: m.text == "📋 Состав")
-def squad_menu(m): bot.send_message(m.chat.id, "📋 **Твой состав:**\n*(Нажми на слот, чтобы выбрать игрока)*", reply_markup=get_squad_kb(m.from_user.id), parse_mode="Markdown")
-
 @bot.callback_query_handler(func=lambda c: c.data.startswith("slot_"))
 def slot_select(call):
     idx, uid = int(call.data.split("_")[1]), str(call.from_user.id)
     required_pos = POSITIONS_DATA[idx]["code"]
-    
     valid_players = [c for c in user_colls.get(uid, []) if c['pos'].upper() == required_pos]
-    
     kb = types.InlineKeyboardMarkup()
     if not valid_players:
         kb.add(types.InlineKeyboardButton("❌ Нет подходящих игроков", callback_data="none"))
     else:
         for c in valid_players:
             kb.add(types.InlineKeyboardButton(f"{c['name']} ({c['stars']}⭐)", callback_data=f"set_{idx}_{c['name']}"))
-    
     kb.add(types.InlineKeyboardButton("🚫 Убрать", callback_data=f"set_{idx}_none"))
     kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_squad"))
-    
     bot.edit_message_text(f"Выбери игрока на позицию {required_pos}:", call.message.chat.id, call.message.message_id, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_squad")
@@ -174,63 +212,13 @@ def back_to_sq(call):
 def set_player_to_squad(call):
     parts = call.data.split("_"); idx, name, uid = int(parts[1]), parts[2], str(call.from_user.id)
     if uid not in user_squads: user_squads[uid] = [None]*7
-    
     if name != "none":
         if any(s and s['name'] == name for i, s in enumerate(user_squads[uid]) if i != idx):
             return bot.answer_callback_query(call.id, "❌ Этот игрок уже в составе!", show_alert=True)
         user_squads[uid][idx] = next(c for c in user_colls[uid] if c['name'] == name)
-    else:
-        user_squads[uid][idx] = None
-        
+    else: user_squads[uid][idx] = None
     save_db(user_squads, 'squads')
     bot.edit_message_text("✅ Обновлено!", call.message.chat.id, call.message.message_id, reply_markup=get_squad_kb(uid))
-
-# --- [8] АДМИН-ПАНЕЛЬ ---
-@bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
-def admin_panel(m):
-    if is_admin(m.from_user):
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.row("➕ Добавить карту", "📝 Изменить карту")
-        kb.row("🗑 Удалить карту", "🚫 Забанить")
-        kb.row("✅ Разбанить", "🏠 Назад в меню")
-        bot.send_message(m.chat.id, "🛠 **Управление игрой:**", reply_markup=kb)
-
-@bot.message_handler(func=lambda m: m.text == "📝 Изменить карту")
-def edit_card_start(m):
-    if not is_admin(m.from_user): return
-    if not cards: return bot.send_message(m.chat.id, "Карт нет.")
-    kb = types.InlineKeyboardMarkup()
-    for c in cards: kb.add(types.InlineKeyboardButton(c['name'], callback_data=f"select_edit_{c['name']}"))
-    bot.send_message(m.chat.id, "Какую карту изменить?", reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("select_edit_"))
-def edit_card_menu(call):
-    name = call.data.split("_")[2]
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("Название", callback_data=f"prop_name_{name}"))
-    kb.add(types.InlineKeyboardButton("Рейтинг", callback_data=f"prop_star_{name}"))
-    kb.add(types.InlineKeyboardButton("Фото", callback_data=f"prop_photo_{name}"))
-    bot.edit_message_text(f"Что хотите изменить у {name}?", call.message.chat.id, call.message.message_id, reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("prop_"))
-def admin_edit_input_step(call):
-    mode, name = call.data.split("_")[1], call.data.split("_")[2]
-    prompts = {"name": "новое Название", "star": "новый Рейтинг (1-5)", "photo": "новое Фото"}
-    msg = bot.send_message(call.message.chat.id, f"Отправьте {prompts[mode]} для {name}:")
-    bot.register_next_step_handler(msg, admin_edit_save, mode, name)
-
-def admin_edit_save(m, mode, name):
-    for c in cards:
-        if c['name'] == name:
-            if mode == "name": c['name'] = m.text
-            elif mode == "star":
-                try: c['stars'] = int(m.text)
-                except: return bot.send_message(m.chat.id, "Нужно число!")
-            elif mode == "photo":
-                if m.photo: c['photo'] = m.photo[-1].file_id
-                else: return bot.send_message(m.chat.id, "Это не фото!")
-    save_db(cards, 'cards')
-    bot.send_message(m.chat.id, "✅ Изменено!", reply_markup=main_kb(m.from_user.id))
 
 @bot.message_handler(func=lambda m: m.text == "➕ Добавить карту")
 def add_card_1(m):
@@ -250,9 +238,7 @@ def add_card_3(m, name):
 
 def add_card_4(m, name, pos):
     try:
-        s = int(m.text)
-        msg = bot.send_message(m.chat.id, "Фото карты:")
-        bot.register_next_step_handler(msg, add_card_fin, name, pos, s)
+        s = int(m.text); msg = bot.send_message(m.chat.id, "Фото карты:"); bot.register_next_step_handler(msg, add_card_fin, name, pos, s)
     except: bot.send_message(m.chat.id, "Введите число!")
 
 def add_card_fin(m, name, pos, stars):
@@ -260,30 +246,61 @@ def add_card_fin(m, name, pos, stars):
     global cards
     cards = [c for c in cards if c['name'].lower() != name.lower()]
     cards.append({"name": name, "pos": pos, "stars": stars, "photo": m.photo[-1].file_id})
-    save_db(cards, 'cards')
-    bot.send_message(m.chat.id, f"✅ Карта добавлена!", reply_markup=main_kb(m.from_user.id))
+    save_db(cards, 'cards'); bot.send_message(m.chat.id, "✅ Карта добавлена!", reply_markup=main_kb(m.from_user.id))
 
-# --- ПВП АРЕНА ТА ІНШЕ ---
-@bot.message_handler(func=lambda m: m.text == "🗂 Коллекция")
-def coll_menu(m):
+@bot.message_handler(func=lambda m: m.text == "📝 Изменить карту")
+def edit_card_start(m):
+    if not is_admin(m.from_user): return
+    if not cards: return bot.send_message(m.chat.id, "Карт нет.")
     kb = types.InlineKeyboardMarkup()
-    for i in range(1, 6): kb.add(types.InlineKeyboardButton("⭐" * i, callback_data=f"view_{i}"))
-    bot.send_message(m.chat.id, "🗂 **Твоя коллекция:**", reply_markup=kb, parse_mode="Markdown")
+    for c in cards: kb.add(types.InlineKeyboardButton(c['name'], callback_data=f"select_edit_{c['name']}"))
+    bot.send_message(m.chat.id, "Какую карту изменить?", reply_markup=kb)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("view_"))
-def view_coll_stars(call):
-    s = int(call.data.split("_")[1]); uid = str(call.from_user.id)
-    my = [c for c in user_colls.get(uid, []) if c['stars'] == s]
-    if not my: return bot.answer_callback_query(call.id, "Нет таких карт!", show_alert=True)
-    txt = f"🗂 **Карты {s}⭐:**\n\n" + "\n".join([f"• {c['name']} ({c['pos']})" for c in my])
-    bot.send_message(call.message.chat.id, txt, parse_mode="Markdown")
-    bot.answer_callback_query(call.id)
+@bot.callback_query_handler(func=lambda c: c.data.startswith("select_edit_"))
+def edit_card_menu(call):
+    name = call.data.split("_")[2]
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("Название", callback_data=f"prop_name_{name}"))
+    kb.add(types.InlineKeyboardButton("Рейтинг", callback_data=f"prop_star_{name}"))
+    kb.add(types.InlineKeyboardButton("Фото", callback_data=f"prop_photo_{name}"))
+    bot.edit_message_text(f"Что изменить у {name}?", call.message.chat.id, call.message.message_id, reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("prop_"))
+def admin_edit_input_step(call):
+    mode, name = call.data.split("_")[1], call.data.split("_")[2]
+    prompts = {"name": "новое Название", "star": "новый Рейтинг (1-5)", "photo": "новое Фото"}
+    msg = bot.send_message(call.message.chat.id, f"Отправьте {prompts[mode]} для {name}:")
+    bot.register_next_step_handler(msg, admin_edit_save, mode, name)
+
+def admin_edit_save(m, mode, name):
+    for c in cards:
+        if c['name'] == name:
+            if mode == "name": c['name'] = m.text
+            elif mode == "star":
+                try: c['stars'] = int(m.text)
+                except: return bot.send_message(m.chat.id, "Нужно число!")
+            elif mode == "photo":
+                if m.photo: c['photo'] = m.photo[-1].file_id
+                else: return bot.send_message(m.chat.id, "Это не фото!")
+    save_db(cards, 'cards'); bot.send_message(m.chat.id, "✅ Изменено!", reply_markup=main_kb(m.from_user.id))
+
+@bot.message_handler(func=lambda m: m.text == "🗑 Удалить карту")
+def adm_delete_card_start(m):
+    if not is_admin(m.from_user): return
+    kb = types.InlineKeyboardMarkup()
+    for c in cards: kb.add(types.InlineKeyboardButton(f"❌ {c['name']}", callback_data=f"del_{c['name']}"))
+    bot.send_message(m.chat.id, "Удалить карту:", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
+def adm_delete_card_fin(call):
+    name = call.data.split("_")[1]; global cards
+    cards = [c for c in cards if c['name'] != name]
+    save_db(cards, 'cards'); bot.edit_message_text(f"✅ Удалено!", call.message.chat.id, call.message.message_id)
 
 @bot.message_handler(func=lambda m: m.text == "🏟 ПВП Арена")
 def arena_main(m):
     kb = types.InlineKeyboardMarkup()
-    kb.row(types.InlineKeyboardButton("🎲 Рандом", callback_data="arena_random"),
-           types.InlineKeyboardButton("👤 По юзеру", callback_data="arena_by_user"))
+    kb.row(types.InlineKeyboardButton("🎲 Рандом", callback_data="arena_random"), types.InlineKeyboardButton("👤 По юзеру", callback_data="arena_by_user"))
     bot.send_message(m.chat.id, "🏟 **ПВП Арена:**", reply_markup=kb, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("arena_"))
@@ -294,8 +311,7 @@ def arena_cb(call):
         if opps: start_battle(call.message.chat.id, uid, random.choice(opps))
         else: bot.answer_callback_query(call.id, "Нет соперников!", show_alert=True)
     else:
-        msg = bot.send_message(call.message.chat.id, "Введи юзернейм (без @):")
-        bot.register_next_step_handler(msg, search_user_arena)
+        msg = bot.send_message(call.message.chat.id, "Введи юзернейм (без @):"); bot.register_next_step_handler(msg, search_user_arena)
     bot.answer_callback_query(call.id)
 
 def search_user_arena(m):
@@ -307,31 +323,12 @@ def search_user_arena(m):
 def start_battle(chat_id, p1_id, p2_id):
     p1_atk, p2_atk = get_power(p1_id), get_power(p2_id)
     if p1_atk == 0 or p2_atk == 0: return bot.send_message(chat_id, "❌ Составы пусты!")
-    total = p1_atk + p2_atk
-    chance1 = (p1_atk / total) * 100
-    res = random.uniform(0, 100)
+    total = p1_atk + p2_atk; res = random.uniform(0, 100)
     bot.send_message(chat_id, f"🏟 **БОЙ:** {users_data[p1_id]['nick']} ({p1_atk}) vs {users_data[p2_id]['nick']} ({p2_atk})")
     time.sleep(1)
-    if res <= chance1: winner, prize = p1_id, int(p2_atk * 0.3)
-    else: winner, prize = p2_id, int(p1_atk * 0.3)
-    users_data[winner]['score'] += prize
-    save_db(users_data, 'users')
+    winner, prize = (p1_id, int(p2_atk * 0.3)) if res <= (p1_atk/total*100) else (p2_id, int(p1_atk * 0.3))
+    users_data[winner]['score'] += prize; save_db(users_data, 'users')
     bot.send_message(chat_id, f"🏆 Победил **{users_data[winner]['nick']}**!\n💰 Награда: `+{prize:,}`.", parse_mode="Markdown")
-
-@bot.message_handler(func=lambda m: m.text == "👤 Профиль")
-def profile(m):
-    uid = str(m.from_user.id)
-    d = users_data.get(uid, {"nick": "Player", "score": 0, "username": "n/a"})
-    # Счетчик собранных карт
-    count = len(user_colls.get(uid, []))
-    
-    text = (f"👤 **Профиль:**\n\n"
-            f"Имя: **{d['nick']}**\n"
-            f"Юзер: @{d['username']}\n"
-            f"💠 Очки: `{d['score']:,}`\n"
-            f"🗂 Собрано карт: **{count}**\n"
-            f"🆔 `{uid}`")
-    bot.send_message(m.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🏠 Назад в меню")
 def back_home(m): bot.send_message(m.chat.id, "⚽️ Главное меню:", reply_markup=main_kb(m.from_user.id))

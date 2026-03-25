@@ -18,14 +18,15 @@ FILES = {
 }
 
 COOLDOWN_ROLL = 10800       # 3 часа на крутку
-COOLDOWN_NICK = 1209600     # 2 недели на смену ника
+COOLDOWN_NICK = 1209600     # 2 недели на ник
 
+# Статистика: шанс выпадения, очки за карту, АТАКА для Арены
 STATS = {
-    1: {"chance": 50, "score": 1000},
-    2: {"chance": 30, "score": 3000},
-    3: {"chance": 12, "score": 5000},
-    4: {"chance": 6, "score": 8000},
-    5: {"chance": 2, "score": 10000}
+    1: {"chance": 50, "score": 1000, "atk": 100},
+    2: {"chance": 30, "score": 3000, "atk": 300},
+    3: {"chance": 12, "score": 5000, "atk": 600},
+    4: {"chance": 6, "score": 8000, "atk": 1000},
+    5: {"chance": 2, "score": 10000, "atk": 1500}
 }
 
 POSITIONS_LIST = ["🧤 ГК", "🛡 ЛЗ", "🛡 ПЗ", "👟 ЦП", "⚡️ ЛВ", "⚡️ ПВ", "🎯 КФ"]
@@ -50,13 +51,19 @@ user_colls = load_db('colls')
 user_squads = load_db('squads')
 users_data = load_db('users')
 cooldowns = {} 
+challenges = {} # Для хранения вызовов на бой
 
-# --- [3] КЛАВИАТУРЫ ---
+# --- [3] ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+def get_power(uid):
+    uid = str(uid)
+    sq = user_squads.get(uid, [None]*7)
+    return sum(STATS[p['stars']]['atk'] for p in sq if p)
+
 def main_kb(uid):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🎰 Крутить карту", "🗂 Коллекция")
     markup.row("📋 Состав", "👤 Профиль")
-    markup.row("🏆 Топ очков", "🏟 Арена")
+    markup.row("🏆 Топ очков", "🏟 ПВП Арена")
     
     user_info = bot.get_chat(uid)
     if user_info.username and user_info.username.lower() in [a.lower() for a in ADMINS]:
@@ -89,7 +96,7 @@ def profile_view(m):
     uid = str(m.from_user.id)
     data = users_data.get(uid, {"nick": "Игрок", "score": 0})
     txt = (
-        f"👤 *Твой профиль:*\n\n"
+        f"👤 **Твой профиль:**\n\n"
         f"📝 Ник: **{data['nick']}**\n"
         f"💰 Очки: **{data['score']:,}**\n"
         f"🗂 Коллекция: **{len(user_colls.get(uid, []))} шт.**"
@@ -175,7 +182,99 @@ def roll_card(message):
     )
     bot.send_photo(message.chat.id, won['photo'], caption=cap, parse_mode="Markdown")
 
-# --- [7] СОСТАВ (ИСПРАВЛЕНО) ---
+# --- [7] ПВП АРЕНА (НОВАЯ ЛОГИКА) ---
+
+@bot.message_handler(func=lambda m: m.text == "🏟 ПВП Арена")
+def arena_menu(m):
+    uid = str(m.from_user.id)
+    if get_power(uid) == 0:
+        return bot.send_message(m.chat.id, "❌ Твой состав пуст! Сначала добавь игроков в **📋 Состав**.")
+    
+    kb = types.InlineKeyboardMarkup()
+    kb.row(types.InlineKeyboardButton("🎲 Рандом", callback_data="arena_random"),
+           types.InlineKeyboardButton("🆔 По ID", callback_data="arena_by_id"))
+    
+    # Если это reply в группе
+    if m.reply_to_message and m.reply_to_message.from_user.id != m.from_user.id:
+        target_id = str(m.reply_to_message.from_user.id)
+        if target_id in users_data:
+            kb.add(types.InlineKeyboardButton(f"⚔️ Вызвать {users_data[target_id]['nick']}", callback_data=f"challenge_{target_id}"))
+
+    bot.send_message(m.chat.id, "🏟 **ПВП Арена**\n\nВыбери тип боя:", reply_markup=kb, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("arena_"))
+def arena_actions(call):
+    uid = str(call.from_user.id)
+    action = call.data.split("_")[1]
+
+    if action == "random":
+        opponents = [u for u in users_data.keys() if u != uid and get_power(u) > 0]
+        if not opponents:
+            return bot.answer_callback_query(call.id, "Нет доступных соперников!", show_alert=True)
+        opp_id = random.choice(opponents)
+        start_battle(call.message.chat.id, uid, opp_id)
+    
+    elif action == "by_id":
+        msg = bot.send_message(call.message.chat.id, "Введите ID игрока для вызова:")
+        bot.register_next_step_handler(msg, challenge_by_id)
+    
+    bot.answer_callback_query(call.id)
+
+def challenge_by_id(m):
+    uid = str(m.from_user.id)
+    opp_id = m.text
+    if opp_id not in users_data:
+        return bot.send_message(m.chat.id, "❌ Игрок с таким ID не найден.")
+    if opp_id == uid:
+        return bot.send_message(m.chat.id, "❌ Нельзя вызвать самого себя.")
+    
+    start_battle(m.chat.id, uid, opp_id)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("challenge_"))
+def group_challenge(call):
+    uid = str(call.from_user.id)
+    opp_id = call.data.split("_")[1]
+    
+    challenges[opp_id] = {"attacker": uid, "chat_id": call.message.chat.id, "time": time.time()}
+    bot.send_message(call.message.chat.id, f"⚔️ **{users_data[uid]['nick']}** вызвал на бой **{users_data[opp_id]['nick']}**!\n\nЧтобы принять, ответь на это сообщение: **Принять**", parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == "принять")
+def accept_challenge(m):
+    uid = str(m.from_user.id)
+    if uid in challenges:
+        if time.time() - challenges[uid]['time'] > 300: # 5 минут лимит
+            del challenges[uid]
+            return bot.reply_to(m, "⏳ Время вызова истекло.")
+        
+        attacker = challenges[uid]['attacker']
+        chat_id = challenges[uid]['chat_id']
+        start_battle(chat_id, attacker, uid)
+        del challenges[uid]
+
+def start_battle(chat_id, p1_id, p2_id):
+    p1_power = get_power(p1_id)
+    p2_power = get_power(p2_id)
+    p1_nick = users_data[p1_id]['nick']
+    p2_nick = users_data[p2_id]['nick']
+
+    bot.send_message(chat_id, f"🏟 **МАТЧ НАЧАЛСЯ!**\n\n⚔️ **{p1_nick}** ({p1_power:,} ⚡️)\n**VS**\n🛡 **{p2_nick}** ({p2_power:,} ⚡️)", parse_mode="Markdown")
+    time.sleep(2)
+
+    if p1_power > p2_power:
+        winner_id, winner_nick, prize_from = p1_id, p1_nick, p2_power
+    elif p2_power > p1_power:
+        winner_id, winner_nick, prize_from = p2_id, p2_nick, p1_power
+    else:
+        return bot.send_message(chat_id, "🤝 **Ничья!** Силы оказались равны.")
+
+    prize = int(prize_from * 0.3)
+    users_data[winner_id]['score'] += prize
+    save_db(users_data, 'users')
+
+    bot.send_message(chat_id, f"🏆 Победил **{winner_nick}**!\n💰 Награда: **+{prize:,} очков** (30% мощи соперника).", parse_mode="Markdown")
+
+# --- [8] СОСТАВ ---
 def get_sq_kb(uid):
     kb = types.InlineKeyboardMarkup()
     sq = user_squads.get(str(uid), [None]*7)
@@ -186,7 +285,7 @@ def get_sq_kb(uid):
 
 @bot.message_handler(func=lambda m: m.text == "📋 Состав")
 def squad_menu(m):
-    bot.send_message(m.chat.id, "📋 **Твой основной состав:**", reply_markup=get_sq_kb(m.from_user.id), parse_mode="Markdown")
+    bot.send_message(m.chat.id, "📋 **Твой состав:**", reply_markup=get_sq_kb(m.from_user.id), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("slot_"))
 def slot_pick(call):
@@ -205,16 +304,11 @@ def slot_save(call):
     if uid not in user_squads: user_squads[uid] = [None]*7
     if name != "none":
         if any(s['name'] == name for s in user_squads[uid] if s and user_squads[uid].index(s) != idx):
-            return bot.answer_callback_query(call.id, "❌ Этот игрок уже в составе!", show_alert=True)
+            return bot.answer_callback_query(call.id, "❌ Уже в составе!", show_alert=True)
         user_squads[uid][idx] = next(c for c in user_colls[uid] if c['name'] == name)
     else: user_squads[uid][idx] = None
     save_db(user_squads, 'squads')
     bot.edit_message_text("✅ Обновлено!", call.message.chat.id, call.message.message_id, reply_markup=get_sq_kb(uid))
-
-# --- [8] АРЕНА (ИСПРАВЛЕНО) ---
-@bot.message_handler(func=lambda m: m.text == "🏟 Арена")
-def arena_view(m):
-    bot.send_message(m.chat.id, "🏟 **Арена в разработке!**\n\nЗдесь ты сможешь сражаться своими составами.", parse_mode="Markdown")
 
 # --- [9] АДМИНКА ---
 @bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
@@ -228,7 +322,7 @@ def admin_p(m):
 
 @bot.message_handler(func=lambda m: m.text == "➕ Добавить карту")
 def adm_add(m):
-    msg = bot.send_message(m.chat.id, "Имя:")
+    msg = bot.send_message(m.chat.id, "Имя игрока:")
     bot.register_next_step_handler(msg, adm_add_pos)
 
 def adm_add_pos(m):
@@ -244,23 +338,23 @@ def adm_add_stars(m, name):
 def adm_add_photo(m, name, pos):
     try:
         stars = int(m.text)
-        msg = bot.send_message(m.chat.id, "Фото:")
+        msg = bot.send_message(m.chat.id, f"Отправь фото для {name}:")
         bot.register_next_step_handler(msg, adm_add_fin, name, pos, stars)
-    except: bot.send_message(m.chat.id, "Ошибка!"); return
+    except: bot.send_message(m.chat.id, "Нужно число!")
 
 def adm_add_fin(m, name, pos, stars):
-    if not m.photo: return
+    if not m.photo: return bot.send_message(m.chat.id, "❌ Нужно фото!")
     global cards
     cards = [c for c in cards if c['name'].lower() != name.lower()]
     cards.append({"name": name, "pos": pos, "stars": stars, "photo": m.photo[-1].file_id})
     save_db(cards, 'cards')
-    bot.send_message(m.chat.id, f"✅ Добавлен: {name}!", reply_markup=admin_kb())
+    bot.send_message(m.chat.id, f"✅ Карта **{name}** успешно добавлена!", reply_markup=main_kb(m.from_user.id))
 
 @bot.message_handler(func=lambda m: m.text == "🗑 Удалить карту")
 def adm_del(m):
     kb = types.InlineKeyboardMarkup()
     for c in cards: kb.add(types.InlineKeyboardButton(f"❌ {c['name']}", callback_data=f"del_{c['name']}"))
-    bot.send_message(m.chat.id, "Что удалить?", reply_markup=kb)
+    bot.send_message(m.chat.id, "Удаление:", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 def del_card(call):
@@ -268,14 +362,14 @@ def del_card(call):
     global cards
     cards = [c for c in cards if c['name'] != name]
     save_db(cards, 'cards')
-    bot.edit_message_text(f"✅ Удалено!", call.message.chat.id, call.message.message_id)
+    bot.edit_message_text(f"✅ Карта {name} удалена!", call.message.chat.id, call.message.message_id)
 
-# --- ПРОЧЕЕ ---
+# --- [10] ПРОЧЕЕ ---
 @bot.message_handler(func=lambda m: m.text == "🗂 Коллекция")
 def coll_menu(m):
     kb = types.InlineKeyboardMarkup()
     for i in range(1, 6): kb.add(types.InlineKeyboardButton("⭐" * i, callback_data=f"v_{i}"))
-    bot.send_message(m.chat.id, "🗂 **Твои карты:**", reply_markup=kb, parse_mode="Markdown")
+    bot.send_message(m.chat.id, "🗂 **Коллекция:**", reply_markup=kb, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("v_"))
 def view_coll(call):

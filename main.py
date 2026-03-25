@@ -6,8 +6,9 @@ import json
 import os
 
 # --- КОНФИГУРАЦИЯ ---
-TOKEN = "8771453170:AAFJXQ7jBhwRQleTKZRnCFhEW0wmRQLxr3c"
-# Обновленный список администраторов (без @)
+# Твой новый токен
+TOKEN = "8660223435:AAF12SYO3Cv9Fb6du30sStGEyQSyAJFiTiE"
+# Список администраторов
 ADMINS = ["merkafor", "Bju_Bet", "Nazikrrk"]
 bot = telebot.TeleBot(TOKEN)
 
@@ -69,7 +70,7 @@ def update_user_record(message):
 def main_kb(username):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("Крутить карту", "Коллекция")
-    markup.row("Состав", "Арена") # Кнопка Премиум удалена
+    markup.row("Состав", "Арена")
     if username and username.lower() in [a.lower() for a in ADMINS]:
         markup.add("🛠 Админ-панель")
     return markup
@@ -109,7 +110,6 @@ def roll_cmd(message):
     if not cards:
         return bot.send_message(message.chat.id, "❌ Карт еще нет в базе!")
 
-    # КД 5 минут для всех (так как Премиум удален)
     is_adm = uname and uname.lower() in [a.lower() for a in ADMINS]
     if not is_adm:
         if uid in cooldowns and now - cooldowns[uid] < 300:
@@ -256,7 +256,7 @@ def coll_view(call):
     bot.send_message(call.message.chat.id, txt, parse_mode="Markdown")
     bot.answer_callback_query(call.id)
 
-# --- АДМИН-ПАНЕЛЬ (ОПИСАНИЕ ВЕРНУЛОСЬ) ---
+# --- АДМИН-ПАНЕЛЬ ---
 
 @bot.message_handler(func=lambda m: m.text == "🛠 Админ-панель")
 def adm_menu(m):
@@ -284,7 +284,7 @@ def adm_add_3(m, name):
 def adm_add_4(m, name, s):
     if not m.photo: return
     fid = m.photo[-1].file_id
-    msg = bot.send_message(m.chat.id, "Введите ОПИСАНИЕ игрока:") # Вернули описание
+    msg = bot.send_message(m.chat.id, "Введите ОПИСАНИЕ игрока:")
     bot.register_next_step_handler(msg, adm_add_fin, name, s, fid)
 
 def adm_add_fin(m, name, s, fid):

@@ -34,13 +34,13 @@ DB_FILES = {
 # Характеристики редкостей: шансы, награды в очках и сила атаки (ATK)
 RARITY_STATS = {
     1: {
-        "chance": 35, 
+        "chance": 30, 
         "score": 1000, 
         "atk": 100,
         "label": "Обычная"
     },
     2: {
-        "chance": 30, 
+        "chance": 25, 
         "score": 3000, 
         "atk": 450,
         "label": "Необычная"
@@ -52,13 +52,13 @@ RARITY_STATS = {
         "label": "Редкая"
     },
     4: {
-        "chance": 10, 
+        "chance": 15, 
         "score": 15000, 
         "atk": 2500,
         "label": "Эпическая"
     },
     5: {
-        "chance": 5,  
+        "chance": 10,  
         "score": 30000, 
         "atk": 5000,
         "label": "Легендарная"

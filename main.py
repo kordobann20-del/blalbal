@@ -89,7 +89,7 @@ def profile_view(m):
     uid = str(m.from_user.id)
     data = users_data.get(uid, {"nick": "Игрок", "score": 0})
     txt = (
-        f"👤 **Твой профиль:**\n\n"
+        f"👤 *Твой профиль:*\n\n"
         f"📝 Ник: **{data['nick']}**\n"
         f"💰 Очки: **{data['score']:,}**\n"
         f"🗂 Коллекция: **{len(user_colls.get(uid, []))} шт.**"

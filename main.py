@@ -462,12 +462,12 @@ def handle_roll_request(message):
     pos_name = POSITIONS_RU.get(reward_card['pos'].upper(), reward_card['pos'])
     
     caption_text = (
-        f"⚽️ **{reward_card['name']}**\n\n"
-        f"📊 Редкость: {stars_display} ({RARITY_STATS[reward_card['stars']]['label']})\n"
-        f"🎯 Позиция: {pos_name}\n\n"
+        f"⚽️ *{reward_card['name']}*\n\n"
+        f"📊 *Редкость:* {stars_display} ({RARITY_STATS[reward_card['stars']]['label']})\n"
+        f"🎯 *Позиция:* {pos_name}\n\n"
         f"💠 {result_note}\n"
-        f"💰 Начислено: +{points_to_add:,} очков\n"
-        f"📈 Ваш текущий баланс: {users_db[user_id_str]['score']:,}\n\n"
+        f"💰 *Начислено:* +{points_to_add:,} очков\n"
+        f"📈 *Ваш текущий баланс:* {users_db[user_id_str]['score']:,}\n\n"
         f"{status_info}"
     )
     
@@ -631,13 +631,13 @@ def show_my_personal_profile(message):
     my_power = get_team_power(uid_str)
     
     msg = (
-        f"👤 **ВАШ ПРОФИЛЬ**\n\n"
-        f"🆔 ID: `{uid_str}`\n"
-        f"👤 Имя: {user_data['nick']}\n\n"
-        f"💠 Баланс очков: `{user_data['score']:,}`\n"
-        f"🗂 Коллекция: {my_cards_total} игроков\n"
-        f"🛡 Мощь состава: **{my_power}**\n"
-        f"🎫 Бонусные прокруты: **{user_data.get('free_rolls', 0)}**"
+        f"👤 *ВАШ ПРОФИЛЬ*\n\n"
+        f"🆔 *ID:* `{uid_str}`\n"
+        f"👤 *Имя:* {user_data['nick']}\n\n"
+        f"💠 *Баланс очков:* `{user_data['score']:,}`\n"
+        f"🗂 *Коллекция:* {my_cards_total} игроков\n"
+        f"🛡 *Мощь состава:* **{my_power}**\n"
+        f"🎫 *Бонусные прокруты:* **{user_data.get('free_rolls', 0)}**"
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
